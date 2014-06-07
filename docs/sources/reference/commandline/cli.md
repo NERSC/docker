@@ -73,6 +73,7 @@ expect an integer, and they can only be specified once.
       -p, --pidfile="/var/run/docker.pid"        Path to use for daemon PID file
       -r, --restart=true                         Restart previously running containers
       -s, --storage-driver=""                    Force the docker runtime to use a specific storage driver
+      --storage-opt=[]                           Set storage driver options
       --selinux-enabled=false                    Enable selinux support
       --tls=false                                Use TLS; implied by tls-verify flags
       --tlscacert="/home/sven/.docker/ca.pem"    Trust only remotes providing a certificate signed by the CA given here
@@ -103,9 +104,9 @@ To use lxc as the execution driver, use `docker -d -e lxc`.
 The docker client will also honor the `DOCKER_HOST` environment variable to set
 the `-H` flag for the client.
 
-    $ docker -H tcp://0.0.0.0:4243 ps
+    $ docker -H tcp://0.0.0.0:2375 ps
     # or
-    $ export DOCKER_HOST="tcp://0.0.0.0:4243"
+    $ export DOCKER_HOST="tcp://0.0.0.0:2375"
     $ docker ps
     # both are equal
 
@@ -259,7 +260,7 @@ happens at the client side (where you're running
 
 The transfer of context from the local machine to the Docker daemon is
 what the `docker` client means when you see the
-"Uploading context" message.
+"Sending build context" message.
 
 If you wish to keep the intermediate containers after the build is
 complete, you must use `--rm=false`. This does not
@@ -440,6 +441,7 @@ To see how the `docker:latest` image was built:
     List images
 
       -a, --all=false      Show all images (by default filter out the intermediate image layers)
+      -f, --filter=[]:     Provide filter values (i.e. 'dangling=true')
       --no-trunc=false     Don't truncate output
       -q, --quiet=false    Only show numeric IDs
 
@@ -478,6 +480,46 @@ by default.
     <none>                        <none>              f9f1e26352f0a3ba6a0ff68167559f64f3e21ff7ada60366e2d44a04befd1d3a   23 hours ago        1.089 GB
     tryout                        latest              2629d1fa0b81b222fca63371ca16cbf6a0772d07759ff80e8d1369b926940074   23 hours ago        131.5 MB
     <none>                        <none>              5ed6274db6ceb2397844896966ea239290555e74ef307030ebb01ff91b1914df   24 hours ago        1.089 GB
+
+### Filtering
+
+The filtering flag (-f or --filter) format is of "key=value". If there are more
+than one filter, then pass multiple flags (e.g. `--filter "foo=bar" --filter "bif=baz"`)
+
+Current filters:
+ * dangling (boolean - true or false)
+
+#### untagged images
+
+    $ sudo docker images --filter "dangling=true"
+
+    REPOSITORY          TAG                 IMAGE ID            CREATED             VIRTUAL SIZE
+    <none>              <none>              8abc22fbb042        4 weeks ago         0 B
+    <none>              <none>              48e5f45168b9        4 weeks ago         2.489 MB
+    <none>              <none>              bf747efa0e2f        4 weeks ago         0 B
+    <none>              <none>              980fe10e5736        12 weeks ago        101.4 MB
+    <none>              <none>              dea752e4e117        12 weeks ago        101.4 MB
+    <none>              <none>              511136ea3c5a        8 months ago        0 B
+
+This will display untagged images, that are the leaves of the images tree (not
+intermediary layers). These images occur when a new build of an image takes the
+repo:tag away from the IMAGE ID, leaving it untagged. A warning will be issued
+if trying to remove an image when a container is presently using it.
+By having this flag it allows for batch cleanup.
+
+Ready for use by `docker rmi ...`, like:
+
+    $ sudo docker rmi $(sudo docker images -f "dangling=true" -q)
+
+    8abc22fbb042
+    48e5f45168b9
+    bf747efa0e2f
+    980fe10e5736
+    dea752e4e117
+    511136ea3c5a
+
+NOTE: Docker will warn you if any containers exist that are using these untagged images.
+
 
 ## import
 
@@ -601,15 +643,6 @@ contains complex json object, so to grab it as JSON, you use
 
 The main process inside the container will be sent SIGKILL, or any
 signal specified with option `--signal`.
-
-### Known Issues (kill)
-
-- [Issue 197](https://github.com/dotcloud/docker/issues/197) indicates
-  that `docker kill` may leave directories behind
-  and make it difficult to remove the container.
-- [Issue 3844](https://github.com/dotcloud/docker/issues/3844) lxc
-  1.0.0 beta3 removed `lcx-kill` which is used by
-  Docker versions before 0.8.0; see the issue for a workaround.
 
 ## load
 
@@ -864,11 +897,9 @@ of all containers.
 The `docker run` command can be used in combination with `docker commit` to
 [*change the command that a container runs*](#commit-an-existing-container).
 
-See [*Redirect Ports*](/use/port_redirection/#port-redirection)
-for more detailed information about the `--expose`, `-p`, `-P` and `--link`
-parameters, and [*Link Containers*](
-/use/working_with_links_names/#working-with-links-names) for specific
-examples using `--link`.
+See the [Docker User Guide](/userguide/dockerlinks/) for more detailed
+information about the `--expose`, `-p`, `-P` and `--link` parameters,
+and linking containers.
 
 ### Known Issues (run –volumes-from)
 
@@ -934,16 +965,16 @@ manipulate the host's docker daemon.
 
     $ sudo docker run -p 127.0.0.1:80:8080 ubuntu bash
 
-This binds port `8080` of the container to port `80` on `127.0.0.1` of the host
-machine. [*Redirect Ports*](/use/port_redirection/#port-redirection)
+This binds port `8080` of the container to port `80` on `127.0.0.1` of
+the host machine. The [Docker User Guide](/userguide/dockerlinks/)
 explains in detail how to manipulate ports in Docker.
 
     $ sudo docker run --expose 80 ubuntu bash
 
-This exposes port `80` of the container for use within a link without publishing
-the port to the host system's interfaces. [*Redirect Ports*](
-/use/port_redirection/#port-redirection) explains in detail how to
-manipulate ports in Docker.
+This exposes port `80` of the container for use within a link without
+publishing the port to the host system's interfaces. The [Docker User
+Guide](/userguide/dockerlinks) explains in detail how to manipulate
+ports in Docker.
 
     $ sudo docker run -e MYVAR1 --env MYVAR2=foo --env-file ./env.list ubuntu bash
 
@@ -1094,10 +1125,10 @@ Search [Docker.io](https://index.docker.io) for images
 
       --no-trunc=false       Don't truncate output
       -s, --stars=0          Only displays with at least xxx stars
-      -t, --trusted=false    Only show trusted builds
+      --automated=false      Only show automated builds
 
 See [*Find Public Images on Docker.io*](
-/use/workingwithrepository/#find-public-images-on-dockerio) for
+/userguide/dockerrepos/#find-public-images-on-dockerio) for
 more details on finding shared images from the commandline.
 
 ## start
@@ -1108,6 +1139,9 @@ more details on finding shared images from the commandline.
 
       -a, --attach=false         Attach container's stdout/stderr and forward all signals to the process
       -i, --interactive=false    Attach container's stdin
+
+When run on a container that has already been started, 
+takes no action and succeeds unconditionally.
 
 ## stop
 
@@ -1130,7 +1164,7 @@ grace period, SIGKILL
 
 You can group your images together using names and tags, and then upload
 them to [*Share Images via Repositories*](
-/use/workingwithrepository/#working-with-the-repository).
+/userguide/dockerrepos/#working-with-the-repository).
 
 ## top
 

@@ -165,6 +165,36 @@ func postContainersKill(eng *engine.Engine, version version.Version, w http.Resp
 	return nil
 }
 
+func postContainersPause(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+	if vars == nil {
+		return fmt.Errorf("Missing parameter")
+	}
+	if err := parseForm(r); err != nil {
+		return err
+	}
+	job := eng.Job("pause", vars["name"])
+	if err := job.Run(); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+func postContainersUnpause(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+	if vars == nil {
+		return fmt.Errorf("Missing parameter")
+	}
+	if err := parseForm(r); err != nil {
+		return err
+	}
+	job := eng.Job("unpause", vars["name"])
+	if err := job.Run(); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
 func getContainersExport(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if vars == nil {
 		return fmt.Errorf("Missing parameter")
@@ -188,6 +218,8 @@ func getImagesJSON(eng *engine.Engine, version version.Version, w http.ResponseW
 		job  = eng.Job("images")
 	)
 
+	job.Setenv("filters", r.Form.Get("filters"))
+	// FIXME this parameter could just be a match filter
 	job.Setenv("filter", r.Form.Get("filter"))
 	job.Setenv("all", r.Form.Get("all"))
 
@@ -500,32 +532,6 @@ func getImagesSearch(eng *engine.Engine, version version.Version, w http.Respons
 	streamJSON(job, w, false)
 
 	return job.Run()
-}
-
-// FIXME: 'insert' is deprecated as of 0.10, and should be removed in a future version.
-func postImagesInsert(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
-	if err := parseForm(r); err != nil {
-		return err
-	}
-	if vars == nil {
-		return fmt.Errorf("Missing parameter")
-	}
-	job := eng.Job("insert", vars["name"], r.Form.Get("url"), r.Form.Get("path"))
-	if version.GreaterThan("1.0") {
-		job.SetenvBool("json", true)
-		streamJSON(job, w, false)
-	} else {
-		job.Stdout.Add(w)
-	}
-	if err := job.Run(); err != nil {
-		if !job.Stdout.Used() {
-			return err
-		}
-		sf := utils.NewStreamFormatter(version.GreaterThan("1.0"))
-		w.Write(sf.FormatError(err))
-	}
-
-	return nil
 }
 
 func postImagesPush(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
@@ -848,6 +854,9 @@ func getContainersByName(eng *engine.Engine, version version.Version, w http.Res
 		return fmt.Errorf("Missing parameter")
 	}
 	var job = eng.Job("container_inspect", vars["name"])
+	if version.LessThan("1.12") {
+		job.SetenvBool("dirty", true)
+	}
 	streamJSON(job, w, false)
 	return job.Run()
 }
@@ -857,6 +866,9 @@ func getImagesByName(eng *engine.Engine, version version.Version, w http.Respons
 		return fmt.Errorf("Missing parameter")
 	}
 	var job = eng.Job("image_inspect", vars["name"])
+	if version.LessThan("1.12") {
+		job.SetenvBool("dirty", true)
+	}
 	streamJSON(job, w, false)
 	return job.Run()
 }
@@ -1073,12 +1085,13 @@ func createRouter(eng *engine.Engine, logging, enableCors bool, dockerVersion st
 			"/commit":                       postCommit,
 			"/build":                        postBuild,
 			"/images/create":                postImagesCreate,
-			"/images/{name:.*}/insert":      postImagesInsert,
 			"/images/load":                  postImagesLoad,
 			"/images/{name:.*}/push":        postImagesPush,
 			"/images/{name:.*}/tag":         postImagesTag,
 			"/containers/create":            postContainersCreate,
 			"/containers/{name:.*}/kill":    postContainersKill,
+			"/containers/{name:.*}/pause":   postContainersPause,
+			"/containers/{name:.*}/unpause": postContainersUnpause,
 			"/containers/{name:.*}/restart": postContainersRestart,
 			"/containers/{name:.*}/start":   postContainersStart,
 			"/containers/{name:.*}/stop":    postContainersStop,

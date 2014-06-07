@@ -36,7 +36,22 @@ You can still call an old version of the api using
 
 ### What's new
 
-docker build now has support for the `forcerm` parameter to always remove containers
+`POST /build`
+
+**New!**
+Build now has support for the `forcerm` parameter to always remove containers
+
+`GET /containers/(name)/json`
+`GET /images/(name)/json`
+
+**New!**
+All the JSON keys are now in CamelCase
+
+**New!**
+Trusted builds are now Automated Builds - `is_trusted` is now `is_automated`.
+
+**Removed Insert Endpoint**
+The insert endpoint has been removed.
 
 ## v1.11
 

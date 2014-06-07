@@ -6,12 +6,12 @@
 Dockerfile - automate the steps of creating a Docker image
 
 # INTRODUCTION
-**Dockerfile** is a configuration file that automates the steps of creating a
-Docker image. It is similar to a Makefile. Docker reads instructions from
-**Dockerfile** to automate the steps otherwise performed manually to create 
-an image. To build an image, create a file called **Dockerfile**.  The 
-**Dockerfile** describes the steps taken to assemble the image. When the 
-**Dockerfile** has been created, call the **docker build** command, using the 
+The **Dockerfile** is a configuration file that automates the steps of creating
+a Docker image. It is similar to a Makefile. Docker reads instructions from the
+**Dockerfile** to automate the steps otherwise performed manually to create an
+image. To build an image, create a file called **Dockerfile**.  The
+**Dockerfile** describes the steps taken to assemble the image. When the
+**Dockerfile** has been created, call the **docker build** command, using the
 path of directory that contains **Dockerfile** as the argument.
 
 # SYNOPSIS
@@ -34,7 +34,7 @@ A Dockerfile is similar to a Makefile.
     The path to the source repository defines where to find the context of the
     build. The build is run by the docker daemon, not the CLI. The whole 
     context must be transferred to the daemon. The Docker CLI reports 
-    "Uploading context" when the context is sent to the daemon.
+    "Sending build context to Docker daemon" when the context is sent to the daemon.
     
 **sudo docker build -t repository/tag .**
  -- specifies a repository and tag at which to save the new image if the build 

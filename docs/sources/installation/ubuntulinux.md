@@ -111,8 +111,7 @@ Now verify that the installation has worked by downloading the
 
 Type `exit` to exit
 
-**Done!**, now continue with the [*Hello
-World*](/examples/hello_world/#hello-world) example.
+**Done!**, continue with the [User Guide](/userguide/).
 
 ## Ubuntu Raring 13.04 and Saucy 13.10 (64 bit)
 
@@ -159,8 +158,7 @@ Now verify that the installation has worked by downloading the
 
 Type `exit` to exit
 
-**Done!**, now continue with the [*Hello
-World*](/examples/hello_world/#hello-world) example.
+**Done!**, now continue with the [User Guide](/userguide/).
 
 ### Giving non-root access
 
@@ -261,9 +259,9 @@ Then reload UFW:
 
 UFW's default set of rules denies all incoming traffic. If you want to
 be able to reach your containers from another host then you should allow
-incoming connections on the Docker port (default 4243):
+incoming connections on the Docker port (default 2375):
 
-    $ sudo ufw allow 4243/tcp
+    $ sudo ufw allow 2375/tcp
 
 ## Docker and local DNS server warnings
 

@@ -27,7 +27,6 @@ import (
 	"github.com/dotcloud/docker/image"
 	"github.com/dotcloud/docker/pkg/graphdb"
 	"github.com/dotcloud/docker/pkg/label"
-	"github.com/dotcloud/docker/pkg/mount"
 	"github.com/dotcloud/docker/pkg/namesgenerator"
 	"github.com/dotcloud/docker/pkg/networkfs/resolvconf"
 	"github.com/dotcloud/docker/pkg/selinux"
@@ -102,21 +101,6 @@ func (daemon *Daemon) Install(eng *engine.Engine) error {
 	return eng.Register("container_inspect", daemon.ContainerInspect)
 }
 
-// Mountpoints should be private to the container
-func remountPrivate(mountPoint string) error {
-	mounted, err := mount.Mounted(mountPoint)
-	if err != nil {
-		return err
-	}
-
-	if !mounted {
-		if err := mount.Mount(mountPoint, mountPoint, "none", "bind,rw"); err != nil {
-			return err
-		}
-	}
-	return mount.ForceMount("", mountPoint, "none", "private")
-}
-
 // List returns an array of all containers registered in the daemon.
 func (daemon *Daemon) List() []*Container {
 	return daemon.containers.List()
@@ -163,11 +147,11 @@ func (daemon *Daemon) load(id string) (*Container, error) {
 // Register makes a container object usable by the daemon as <container.ID>
 // This is a wrapper for register
 func (daemon *Daemon) Register(container *Container) error {
-	return daemon.register(container, true)
+	return daemon.register(container, true, nil)
 }
 
 // register makes a container object usable by the daemon as <container.ID>
-func (daemon *Daemon) register(container *Container, updateSuffixarray bool) error {
+func (daemon *Daemon) register(container *Container, updateSuffixarray bool, containersToStart *[]*Container) error {
 	if container.daemon != nil || daemon.Exists(container.ID) {
 		return fmt.Errorf("Container is already loaded")
 	}
@@ -236,13 +220,13 @@ func (daemon *Daemon) register(container *Container, updateSuffixarray bool) err
 		if !info.IsRunning() {
 			utils.Debugf("Container %s was supposed to be running but is not.", container.ID)
 			if daemon.config.AutoRestart {
-				utils.Debugf("Restarting")
+				utils.Debugf("Marking as restarting")
 				if err := container.Unmount(); err != nil {
 					utils.Debugf("restart unmount error %s", err)
 				}
 
-				if err := container.Start(); err != nil {
-					return err
+				if containersToStart != nil {
+					*containersToStart = append(*containersToStart, container)
 				}
 			} else {
 				utils.Debugf("Marking as stopped")
@@ -327,7 +311,12 @@ func (daemon *Daemon) Destroy(container *Container) error {
 }
 
 func (daemon *Daemon) restore() error {
-	debug := (os.Getenv("DEBUG") != "" || os.Getenv("TEST") != "")
+	var (
+		debug             = (os.Getenv("DEBUG") != "" || os.Getenv("TEST") != "")
+		containers        = make(map[string]*Container)
+		currentDriver     = daemon.driver.String()
+		containersToStart = []*Container{}
+	)
 
 	if !debug {
 		fmt.Printf("Loading containers: ")
@@ -336,8 +325,6 @@ func (daemon *Daemon) restore() error {
 	if err != nil {
 		return err
 	}
-	containers := make(map[string]*Container)
-	currentDriver := daemon.driver.String()
 
 	for _, v := range dir {
 		id := v.Name()
@@ -366,7 +353,7 @@ func (daemon *Daemon) restore() error {
 			}
 			e := entities[p]
 			if container, ok := containers[e.ID()]; ok {
-				if err := daemon.register(container, false); err != nil {
+				if err := daemon.register(container, false, &containersToStart); err != nil {
 					utils.Debugf("Failed to register container %s: %s", container.ID, err)
 				}
 				delete(containers, e.ID())
@@ -381,12 +368,20 @@ func (daemon *Daemon) restore() error {
 		if err != nil {
 			utils.Debugf("Setting default id - %s", err)
 		}
-		if err := daemon.register(container, false); err != nil {
+		if err := daemon.register(container, false, &containersToStart); err != nil {
 			utils.Debugf("Failed to register container %s: %s", container.ID, err)
 		}
 	}
 
 	daemon.idIndex.UpdateSuffixarray()
+
+	for _, container := range containersToStart {
+		utils.Debugf("Starting container %d", container.ID)
+		if err := container.Start(); err != nil {
+			utils.Debugf("Failed to start container %s: %s", container.ID, err)
+		}
+	}
+
 	if !debug {
 		fmt.Printf(": done.\n")
 	}
@@ -780,15 +775,11 @@ func NewDaemonFromDirectory(config *daemonconfig.Config, eng *engine.Engine) (*D
 	graphdriver.DefaultDriver = config.GraphDriver
 
 	// Load storage driver
-	driver, err := graphdriver.New(config.Root)
+	driver, err := graphdriver.New(config.Root, config.GraphOptions)
 	if err != nil {
 		return nil, err
 	}
 	utils.Debugf("Using graph driver %s", driver)
-
-	if err := remountPrivate(config.Root); err != nil {
-		return nil, err
-	}
 
 	daemonRepo := path.Join(config.Root, "containers")
 
@@ -809,7 +800,7 @@ func NewDaemonFromDirectory(config *daemonconfig.Config, eng *engine.Engine) (*D
 
 	// We don't want to use a complex driver like aufs or devmapper
 	// for volumes, just a plain filesystem
-	volumesDriver, err := graphdriver.GetDriver("vfs", config.Root)
+	volumesDriver, err := graphdriver.GetDriver("vfs", config.Root, config.GraphOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -938,10 +929,6 @@ func (daemon *Daemon) Close() error {
 		utils.Errorf("daemon.containerGraph.Close(): %s", err.Error())
 		errorsStrings = append(errorsStrings, err.Error())
 	}
-	if err := mount.Unmount(daemon.config.Root); err != nil {
-		utils.Errorf("daemon.Umount(%s): %s", daemon.config.Root, err.Error())
-		errorsStrings = append(errorsStrings, err.Error())
-	}
 	if len(errorsStrings) > 0 {
 		return fmt.Errorf("%s", strings.Join(errorsStrings, ", "))
 	}
@@ -1012,6 +999,22 @@ func (daemon *Daemon) Diff(container *Container) (archive.Archive, error) {
 
 func (daemon *Daemon) Run(c *Container, pipes *execdriver.Pipes, startCallback execdriver.StartCallback) (int, error) {
 	return daemon.execDriver.Run(c.command, pipes, startCallback)
+}
+
+func (daemon *Daemon) Pause(c *Container) error {
+	if err := daemon.execDriver.Pause(c.command); err != nil {
+		return err
+	}
+	c.State.SetPaused()
+	return nil
+}
+
+func (daemon *Daemon) Unpause(c *Container) error {
+	if err := daemon.execDriver.Unpause(c.command); err != nil {
+		return err
+	}
+	c.State.SetUnpaused()
+	return nil
 }
 
 func (daemon *Daemon) Kill(c *Container, sig int) error {

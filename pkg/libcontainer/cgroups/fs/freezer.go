@@ -4,6 +4,7 @@ import (
 	"io/ioutil"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/dotcloud/docker/pkg/libcontainer/cgroups"
 )
@@ -12,19 +13,33 @@ type freezerGroup struct {
 }
 
 func (s *freezerGroup) Set(d *data) error {
-	dir, err := d.join("freezer")
-	if err != nil {
-		if err != cgroups.ErrNotFound {
+	switch d.c.Freezer {
+	case cgroups.Frozen, cgroups.Thawed:
+		dir, err := d.path("freezer")
+		if err != nil {
 			return err
 		}
-		return nil
+
+		if err := writeFile(dir, "freezer.state", string(d.c.Freezer)); err != nil {
+			return err
+		}
+
+		for {
+			state, err := readFile(dir, "freezer.state")
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(state) == string(d.c.Freezer) {
+				break
+			}
+			time.Sleep(1 * time.Millisecond)
+		}
+	default:
+		if _, err := d.join("freezer"); err != nil && err != cgroups.ErrNotFound {
+			return err
+		}
 	}
 
-	if d.c.Freezer != "" {
-		if err := writeFile(dir, "freezer.state", d.c.Freezer); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 

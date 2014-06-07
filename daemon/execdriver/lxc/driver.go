@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"runtime"
 
 	"github.com/dotcloud/docker/daemon/execdriver"
 	"github.com/dotcloud/docker/pkg/label"
@@ -26,6 +27,7 @@ const DriverName = "lxc"
 
 func init() {
 	execdriver.RegisterInitFunc(DriverName, func(args *execdriver.InitArgs) error {
+        runtime.LockOSThread()
 		if err := setupEnv(args); err != nil {
 			return err
 		}

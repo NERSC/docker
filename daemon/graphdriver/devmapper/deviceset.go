@@ -905,7 +905,7 @@ func (devices *DeviceSet) MountDevice(hash, path, mountLabel string) error {
 		return fmt.Errorf("Error activating devmapper device for '%s': %s", hash, err)
 	}
 
-	var flags uintptr = syscall.MS_MGC_VAL
+	var flags uintptr = syscall.MS_MGC_VAL|syscall.MS_NOSUID
 
 	mountOptions := label.FormatMountLabel("discard", mountLabel)
 	err = syscall.Mount(info.DevName(), path, "ext4", flags, mountOptions)

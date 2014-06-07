@@ -43,7 +43,8 @@ lxc.se_context = {{ .ProcessLabel}}
 lxc.tty = 1
 
 {{if .Privileged}}
-lxc.cgroup.devices.allow = a
+#Disabled privilegd mode  RSC
+#lxc.cgroup.devices.allow = a
 {{else}}
 # no implicit access to devices
 lxc.cgroup.devices.deny = a
@@ -75,9 +76,9 @@ lxc.mount.entry = shm {{escapeFstabSpaces $ROOTFS}}/dev/shm tmpfs {{formatMountL
 
 {{range $value := .Mounts}}
 {{if $value.Writable}}
-lxc.mount.entry = {{$value.Source}} {{escapeFstabSpaces $ROOTFS}}/{{escapeFstabSpaces $value.Destination}} none bind,rw 0 0
+lxc.mount.entry = {{$value.Source}} {{escapeFstabSpaces $ROOTFS}}/{{escapeFstabSpaces $value.Destination}} none bind,rw,nosuid 0 0
 {{else}}
-lxc.mount.entry = {{$value.Source}} {{escapeFstabSpaces $ROOTFS}}/{{escapeFstabSpaces $value.Destination}} none bind,ro 0 0
+lxc.mount.entry = {{$value.Source}} {{escapeFstabSpaces $ROOTFS}}/{{escapeFstabSpaces $value.Destination}} none bind,ro,nosuid 0 0
 {{end}}
 {{end}}
 
@@ -106,9 +107,10 @@ lxc.cgroup.cpuset.cpus = {{.Resources.Cpuset}}
 {{end}}
 {{end}}
 
+# Pandora's box? Disable.  RSC
 {{if .Config.lxc}}
 {{range $value := .Config.lxc}}
-lxc.{{$value}}
+#lxc.{{$value}}
 {{end}}
 {{end}}
 `

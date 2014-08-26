@@ -3,15 +3,16 @@ package portmapper
 import (
 	"errors"
 	"fmt"
-	"github.com/dotcloud/docker/pkg/iptables"
-	"github.com/dotcloud/docker/pkg/proxy"
 	"net"
 	"sync"
+
+	"github.com/docker/docker/daemon/networkdriver/portallocator"
+	"github.com/docker/docker/pkg/iptables"
 )
 
 type mapping struct {
 	proto         string
-	userlandProxy proxy.Proxy
+	userlandProxy UserlandProxy
 	host          net.Addr
 	container     net.Addr
 }
@@ -22,7 +23,8 @@ var (
 
 	// udp:ip:port
 	currentMappings = make(map[string]*mapping)
-	newProxy        = proxy.NewProxy
+
+	NewProxy = NewProxyCommand
 )
 
 var (
@@ -35,51 +37,76 @@ func SetIptablesChain(c *iptables.Chain) {
 	chain = c
 }
 
-func Map(container net.Addr, hostIP net.IP, hostPort int) error {
+func Map(container net.Addr, hostIP net.IP, hostPort int) (host net.Addr, err error) {
 	lock.Lock()
 	defer lock.Unlock()
 
-	var m *mapping
+	var (
+		m                 *mapping
+		proto             string
+		allocatedHostPort int
+		proxy             UserlandProxy
+	)
+
 	switch container.(type) {
 	case *net.TCPAddr:
+		proto = "tcp"
+		if allocatedHostPort, err = portallocator.RequestPort(hostIP, proto, hostPort); err != nil {
+			return nil, err
+		}
+
 		m = &mapping{
-			proto:     "tcp",
-			host:      &net.TCPAddr{IP: hostIP, Port: hostPort},
+			proto:     proto,
+			host:      &net.TCPAddr{IP: hostIP, Port: allocatedHostPort},
 			container: container,
 		}
+
+		proxy = NewProxy(proto, hostIP, allocatedHostPort, container.(*net.TCPAddr).IP, container.(*net.TCPAddr).Port)
 	case *net.UDPAddr:
+		proto = "udp"
+		if allocatedHostPort, err = portallocator.RequestPort(hostIP, proto, hostPort); err != nil {
+			return nil, err
+		}
+
 		m = &mapping{
-			proto:     "udp",
-			host:      &net.UDPAddr{IP: hostIP, Port: hostPort},
+			proto:     proto,
+			host:      &net.UDPAddr{IP: hostIP, Port: allocatedHostPort},
 			container: container,
 		}
+
+		proxy = NewProxy(proto, hostIP, allocatedHostPort, container.(*net.UDPAddr).IP, container.(*net.UDPAddr).Port)
 	default:
-		return ErrUnknownBackendAddressType
+		return nil, ErrUnknownBackendAddressType
 	}
+
+	// release the allocated port on any further error during return.
+	defer func() {
+		if err != nil {
+			portallocator.ReleasePort(hostIP, proto, allocatedHostPort)
+		}
+	}()
 
 	key := getKey(m.host)
 	if _, exists := currentMappings[key]; exists {
-		return ErrPortMappedForIP
+		return nil, ErrPortMappedForIP
 	}
 
 	containerIP, containerPort := getIPAndPort(m.container)
-	if err := forward(iptables.Add, m.proto, hostIP, hostPort, containerIP.String(), containerPort); err != nil {
-		return err
+	if err := forward(iptables.Add, m.proto, hostIP, allocatedHostPort, containerIP.String(), containerPort); err != nil {
+		return nil, err
 	}
 
-	p, err := newProxy(m.host, m.container)
-	if err != nil {
-		// need to undo the iptables rules before we reutrn
-		forward(iptables.Delete, m.proto, hostIP, hostPort, containerIP.String(), containerPort)
-		return err
-	}
-
-	m.userlandProxy = p
+	m.userlandProxy = proxy
 	currentMappings[key] = m
 
-	go p.Run()
+	if err := proxy.Start(); err != nil {
+		// need to undo the iptables rules before we return
+		forward(iptables.Delete, m.proto, hostIP, allocatedHostPort, containerIP.String(), containerPort)
 
-	return nil
+		return nil, err
+	}
+
+	return m.host, nil
 }
 
 func Unmap(host net.Addr) error {
@@ -92,7 +119,8 @@ func Unmap(host net.Addr) error {
 		return ErrPortNotMapped
 	}
 
-	data.userlandProxy.Close()
+	data.userlandProxy.Stop()
+
 	delete(currentMappings, key)
 
 	containerIP, containerPort := getIPAndPort(data.container)
@@ -100,6 +128,18 @@ func Unmap(host net.Addr) error {
 	if err := forward(iptables.Delete, data.proto, hostIP, hostPort, containerIP.String(), containerPort); err != nil {
 		return err
 	}
+
+	switch a := host.(type) {
+	case *net.TCPAddr:
+		if err := portallocator.ReleasePort(a.IP, "tcp", a.Port); err != nil {
+			return err
+		}
+	case *net.UDPAddr:
+		if err := portallocator.ReleasePort(a.IP, "udp", a.Port); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 

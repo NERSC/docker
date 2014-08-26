@@ -1,12 +1,12 @@
-page_title: Docker.io API
-page_description: API Documentation for the Docker.io API
-page_keywords: API, Docker, index, REST, documentation, Docker.io, registry
+page_title: Docker Hub API
+page_description: API Documentation for the Docker Hub API
+page_keywords: API, Docker, index, REST, documentation, Docker Hub, registry
 
-# Docker.io API
+# Docker Hub API
 
 ## Introduction
 
-- This is the REST API for [Docker.io](http://index.docker.io).
+- This is the REST API for [Docker Hub](https://hub.docker.com).
 - Authorization is done with basic auth over SSL
 - Not all commands require authentication, only those noted as such.
 
@@ -421,7 +421,7 @@ Registering a new account.
         Accept: application/json
         Content-Type: application/json
 
-        {"email": "sam@dotcloud.com",
+        {"email": "sam@docker.com",
          "password": "toto42",
          "username": "foobar"}
 
@@ -468,7 +468,7 @@ Change a password or email address for given user. If you pass in an
         Content-Type: application/json
         Authorization: Basic akmklmasadalkm==
 
-        {"email": "sam@dotcloud.com",
+        {"email": "sam@docker.com",
          "password": "toto42"}
 
     Parameters:

@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+
+	"github.com/docker/docker/pkg/log"
 )
 
 const (
@@ -82,13 +84,18 @@ func StdCopy(dstout, dsterr io.Writer, src io.Reader) (written int64, err error)
 		for nr < StdWriterPrefixLen {
 			var nr2 int
 			nr2, er = src.Read(buf[nr:])
+			nr += nr2
 			if er == io.EOF {
-				return written, nil
+				if nr < StdWriterPrefixLen {
+					log.Debugf("Corrupted prefix: %v", buf[:nr])
+					return written, nil
+				}
+				break
 			}
 			if er != nil {
+				log.Debugf("Error reading header: %s", er)
 				return 0, er
 			}
-			nr += nr2
 		}
 
 		// Check the first byte to know where to write
@@ -102,18 +109,18 @@ func StdCopy(dstout, dsterr io.Writer, src io.Reader) (written int64, err error)
 			// Write on stderr
 			out = dsterr
 		default:
-			Debugf("Error selecting output fd: (%d)", buf[StdWriterFdIndex])
+			log.Debugf("Error selecting output fd: (%d)", buf[StdWriterFdIndex])
 			return 0, ErrInvalidStdHeader
 		}
 
 		// Retrieve the size of the frame
 		frameSize = int(binary.BigEndian.Uint32(buf[StdWriterSizeIndex : StdWriterSizeIndex+4]))
-		Debugf("framesize: %d", frameSize)
+		log.Debugf("framesize: %d", frameSize)
 
 		// Check if the buffer is big enough to read the frame.
 		// Extend it if necessary.
 		if frameSize+StdWriterPrefixLen > bufLen {
-			Debugf("Extending buffer cap by %d (was %d)", frameSize+StdWriterPrefixLen-bufLen+1, len(buf))
+			log.Debugf("Extending buffer cap by %d (was %d)", frameSize+StdWriterPrefixLen-bufLen+1, len(buf))
 			buf = append(buf, make([]byte, frameSize+StdWriterPrefixLen-bufLen+1)...)
 			bufLen = len(buf)
 		}
@@ -122,30 +129,32 @@ func StdCopy(dstout, dsterr io.Writer, src io.Reader) (written int64, err error)
 		for nr < frameSize+StdWriterPrefixLen {
 			var nr2 int
 			nr2, er = src.Read(buf[nr:])
+			nr += nr2
 			if er == io.EOF {
-				return written, nil
+				if nr < frameSize+StdWriterPrefixLen {
+					log.Debugf("Corrupted frame: %v", buf[StdWriterPrefixLen:nr])
+					return written, nil
+				}
+				break
 			}
 			if er != nil {
-				Debugf("Error reading frame: %s", er)
+				log.Debugf("Error reading frame: %s", er)
 				return 0, er
 			}
-			nr += nr2
 		}
 
 		// Write the retrieved frame (without header)
 		nw, ew = out.Write(buf[StdWriterPrefixLen : frameSize+StdWriterPrefixLen])
-		if nw > 0 {
-			written += int64(nw)
-		}
 		if ew != nil {
-			Debugf("Error writing frame: %s", ew)
+			log.Debugf("Error writing frame: %s", ew)
 			return 0, ew
 		}
 		// If the frame has not been fully written: error
 		if nw != frameSize {
-			Debugf("Error Short Write: (%d on %d)", nw, frameSize)
+			log.Debugf("Error Short Write: (%d on %d)", nw, frameSize)
 			return 0, io.ErrShortWrite
 		}
+		written += int64(nw)
 
 		// Move the rest of the buffer to the beginning
 		copy(buf, buf[frameSize+StdWriterPrefixLen:])

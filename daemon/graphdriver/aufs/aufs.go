@@ -30,11 +30,12 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/dotcloud/docker/archive"
-	"github.com/dotcloud/docker/daemon/graphdriver"
-	"github.com/dotcloud/docker/pkg/label"
-	mountpk "github.com/dotcloud/docker/pkg/mount"
-	"github.com/dotcloud/docker/utils"
+	"github.com/docker/docker/archive"
+	"github.com/docker/docker/daemon/graphdriver"
+	"github.com/docker/docker/pkg/log"
+	mountpk "github.com/docker/docker/pkg/mount"
+	"github.com/docker/docker/utils"
+	"github.com/docker/libcontainer/label"
 )
 
 var (
@@ -209,7 +210,7 @@ func (a *Driver) Remove(id string) error {
 	defer a.Unlock()
 
 	if a.active[id] != 0 {
-		utils.Errorf("Warning: removing active id %s\n", id)
+		log.Errorf("Warning: removing active id %s", id)
 	}
 
 	// Make sure the dir is umounted first
@@ -295,7 +296,7 @@ func (a *Driver) Put(id string) {
 
 // Returns an archive of the contents for the id
 func (a *Driver) Diff(id string) (archive.Archive, error) {
-	return archive.TarFilter(path.Join(a.rootPath(), "diff", id), &archive.TarOptions{
+	return archive.TarWithOptions(path.Join(a.rootPath(), "diff", id), &archive.TarOptions{
 		Compression: archive.Uncompressed,
 	})
 }
@@ -378,7 +379,7 @@ func (a *Driver) Cleanup() error {
 
 	for _, id := range ids {
 		if err := a.unmount(id); err != nil {
-			utils.Errorf("Unmounting %s: %s", utils.TruncateID(id), err)
+			log.Errorf("Unmounting %s: %s", utils.TruncateID(id), err)
 		}
 	}
 

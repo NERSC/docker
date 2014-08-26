@@ -12,18 +12,20 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dotcloud/docker/archive"
-	"github.com/dotcloud/docker/daemon/graphdriver"
-	"github.com/dotcloud/docker/dockerversion"
-	"github.com/dotcloud/docker/image"
-	"github.com/dotcloud/docker/runconfig"
-	"github.com/dotcloud/docker/utils"
+	"github.com/docker/docker/archive"
+	"github.com/docker/docker/daemon/graphdriver"
+	"github.com/docker/docker/dockerversion"
+	"github.com/docker/docker/image"
+	"github.com/docker/docker/pkg/log"
+	"github.com/docker/docker/pkg/truncindex"
+	"github.com/docker/docker/runconfig"
+	"github.com/docker/docker/utils"
 )
 
 // A Graph is a store for versioned filesystem images and the relationship between them.
 type Graph struct {
 	Root    string
-	idIndex *utils.TruncIndex
+	idIndex *truncindex.TruncIndex
 	driver  graphdriver.Driver
 }
 
@@ -41,7 +43,7 @@ func NewGraph(root string, driver graphdriver.Driver) (*Graph, error) {
 
 	graph := &Graph{
 		Root:    abspath,
-		idIndex: utils.NewTruncIndex([]string{}),
+		idIndex: truncindex.NewTruncIndex([]string{}),
 		driver:  driver,
 	}
 	if err := graph.restore(); err != nil {
@@ -62,8 +64,8 @@ func (graph *Graph) restore() error {
 			ids = append(ids, id)
 		}
 	}
-	graph.idIndex = utils.NewTruncIndex(ids)
-	utils.Debugf("Restored %d elements", len(dir))
+	graph.idIndex = truncindex.NewTruncIndex(ids)
+	log.Debugf("Restored %d elements", len(dir))
 	return nil
 }
 

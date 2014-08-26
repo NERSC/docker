@@ -237,7 +237,7 @@ Return low-level information on the container `id`
                              "Bridge": "",
                              "PortMapping": null
                      },
-                     "SysInitPath": "/home/kitty/go/src/github.com/dotcloud/docker/bin/docker",
+                     "SysInitPath": "/home/kitty/go/src/github.com/docker/docker/bin/docker",
                      "ResolvConfPath": "/etc/resolv.conf",
                      "Volumes": {},
                      "HostConfig": {
@@ -303,7 +303,7 @@ List processes running inside the container `id`
 
      
 
-    -   **ps_args** – ps arguments to use (eg. aux)
+    -   **ps_args** – ps arguments to use (e.g., aux)
 
     Status Codes:
 
@@ -549,7 +549,7 @@ Attach to the container `id`
 
     `STREAM_TYPE` can be:
 
-    -   0: stdin (will be writen on stdout)
+    -   0: stdin (will be written on stdout)
     -   1: stdout
     -   2: stderr
 
@@ -754,6 +754,13 @@ Insert a file from `url` in the image `name` at `path`
         {"error":"Invalid..."}
         ...
 
+	Query Parameters:
+
+
+
+	-	**url** – The url from where the file is taken
+	-	**path** – The path where the file is stored
+
     Status Codes:
 
     -   **200** – no error
@@ -793,8 +800,8 @@ Return low-level information on the image `name`
                              "OpenStdin":true,
                              "StdinOnce":false,
                              "Env":null,
-                             "Cmd": ["/bin/bash"]
-                             ,"Dns":null,
+                             "Cmd": ["/bin/bash"],
+                             "Dns":null,
                              "Image":"base",
                              "Volumes":null,
                              "VolumesFrom":"",
@@ -862,12 +869,6 @@ Push the image `name` on the registry
         {"status":"Pushing", "progress":"1/? (n/a)", "progressDetail":{"current":1}}}
         {"error":"Invalid..."}
         ...
-
-    Query Parameters:
-
-     
-
-    -   **registry** – the registry you wan to push, optional
 
     Request Headers:
 
@@ -943,7 +944,7 @@ Remove the image `name` from the filesystem
 
 `GET /images/search`
 
-Search for an image on [Docker.io](https://index.docker.io).
+Search for an image on [Docker Hub](https://hub.docker.com).
 
 > **Note**:
 > The response keys have changed from API v1.6 to reflect the JSON
@@ -1157,7 +1158,7 @@ Create a new image from a container's changes
     -   **repo** – repository
     -   **tag** – tag
     -   **m** – commit message
-    -   **author** – author (eg. "John Hannibal Smith
+    -   **author** – author (e.g., "John Hannibal Smith
         <[hannibal@a-team.com](mailto:hannibal%40a-team.com)>")
     -   **run** – config automatically applied when the image is run.
         (ex: {"Cmd": ["cat", "/world"], "PortSpecs":["22"]})

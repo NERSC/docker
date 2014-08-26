@@ -1,12 +1,12 @@
 site_name: Docker Documentation
-#site_url: http://docs.docker.io/
+#site_url: http://docs.docker.com/
 site_url: /
 site_description: Documentation for fast and lightweight Docker container based virtualization framework.
 site_favicon: img/favicon.png
 
 dev_addr: '0.0.0.0:8000'
 
-repo_url: https://github.com/dotcloud/docker/
+repo_url: https://github.com/docker/docker/
 
 docs_dir: sources
 
@@ -34,6 +34,7 @@ pages:
 - ['installation/mac.md', 'Installation', 'Mac OS X']
 - ['installation/ubuntulinux.md', 'Installation', 'Ubuntu']
 - ['installation/rhel.md', 'Installation', 'Red Hat Enterprise Linux']
+- ['installation/oracle.md', 'Installation', 'Oracle Linux']
 - ['installation/centos.md', 'Installation', 'CentOS']
 - ['installation/debian.md', 'Installation', 'Debian']
 - ['installation/gentoolinux.md', 'Installation', 'Gentoo']
@@ -51,19 +52,19 @@ pages:
 
 # User Guide:
 - ['userguide/index.md', 'User Guide', 'The Docker User Guide' ]
-- ['userguide/dockerio.md', 'User Guide', 'Getting Started with Docker.io' ]
+- ['userguide/dockerhub.md', 'User Guide', 'Getting Started with Docker Hub' ]
 - ['userguide/dockerizing.md', 'User Guide', 'Dockerizing Applications' ]
 - ['userguide/usingdocker.md', 'User Guide', 'Working with Containers' ]
 - ['userguide/dockerimages.md', 'User Guide', 'Working with Docker Images' ]
 - ['userguide/dockerlinks.md', 'User Guide', 'Linking containers together' ]
 - ['userguide/dockervolumes.md', 'User Guide', 'Managing data in containers' ]
-- ['userguide/dockerrepos.md', 'User Guide', 'Working with Docker.io' ]
+- ['userguide/dockerrepos.md', 'User Guide', 'Working with Docker Hub' ]
 
-# Docker.io docs:
-- ['docker-io/index.md', 'Docker.io', 'Docker.io' ]
-- ['docker-io/accounts.md', 'Docker.io', 'Accounts']
-- ['docker-io/repos.md', 'Docker.io', 'Repositories']
-- ['docker-io/builds.md', 'Docker.io', 'Automated Builds']
+# Docker Hub docs:
+- ['docker-hub/index.md', 'Docker Hub', 'Docker Hub' ]
+- ['docker-hub/accounts.md', 'Docker Hub', 'Accounts']
+- ['docker-hub/repos.md', 'Docker Hub', 'Repositories']
+- ['docker-hub/builds.md', 'Docker Hub', 'Automated Builds']
 
 # Examples:
 - ['examples/index.md', '**HIDDEN**']
@@ -83,10 +84,12 @@ pages:
 - ['articles/security.md', 'Articles', 'Security']
 - ['articles/https.md', 'Articles', 'Running Docker with HTTPS']
 - ['articles/host_integration.md', 'Articles', 'Automatically starting Containers']
+- ['articles/certificates.md', 'Articles', 'Using certificates for repository client verification']
 - ['articles/using_supervisord.md', 'Articles', 'Using Supervisor']
 - ['articles/cfengine_process_management.md', 'Articles', 'Process management with CFEngine']
 - ['articles/puppet.md', 'Articles', 'Using Puppet']
 - ['articles/chef.md', 'Articles', 'Using Chef']
+- ['articles/dsc.md', 'Articles', 'Using PowerShell DSC']
 - ['articles/ambassador_pattern_linking.md', 'Articles', 'Cross-Host linking using Ambassador Containers']
 - ['articles/runmetrics.md', 'Articles', 'Runtime metrics']
 - ['articles/baseimages.md', 'Articles', 'Creating a Base Image']
@@ -99,12 +102,15 @@ pages:
 - ['faq.md', 'Reference', 'FAQ']
 - ['reference/run.md', 'Reference', 'Run Reference']
 - ['reference/api/index.md', '**HIDDEN**']
-- ['reference/api/docker-io_api.md', 'Reference', 'Docker.io API']
+- ['reference/api/docker-io_api.md', 'Reference', 'Docker Hub API']
 - ['reference/api/registry_api.md', 'Reference', 'Docker Registry API']
-- ['reference/api/registry_index_spec.md', 'Reference', 'Registry & Index Spec']
+- ['reference/api/hub_registry_spec.md', 'Reference', 'Docker Hub and Registry Spec']
 - ['reference/api/docker_remote_api.md', 'Reference', 'Docker Remote API']
+- ['reference/api/docker_remote_api_v1.14.md', 'Reference', 'Docker Remote API v1.14']
+- ['reference/api/docker_remote_api_v1.13.md', 'Reference', 'Docker Remote API v1.13']
+- ['reference/api/docker_remote_api_v1.12.md', 'Reference', 'Docker Remote API v1.12']
 - ['reference/api/docker_remote_api_v1.11.md', 'Reference', 'Docker Remote API v1.11']
-- ['reference/api/docker_remote_api_v1.10.md', 'Reference', 'Docker Remote API v1.10']
+- ['reference/api/docker_remote_api_v1.10.md', '**HIDDEN**']
 - ['reference/api/docker_remote_api_v1.9.md', '**HIDDEN**']
 - ['reference/api/docker_remote_api_v1.8.md', '**HIDDEN**']
 - ['reference/api/docker_remote_api_v1.7.md', '**HIDDEN**']
@@ -116,8 +122,7 @@ pages:
 - ['reference/api/docker_remote_api_v1.1.md', '**HIDDEN**']
 - ['reference/api/docker_remote_api_v1.0.md', '**HIDDEN**']
 - ['reference/api/remote_api_client_libraries.md', 'Reference', 'Docker Remote API Client Libraries']
-- ['reference/api/docker_io_oauth_api.md', 'Reference', 'Docker IO OAuth API']
-- ['reference/api/docker_io_accounts_api.md', 'Reference', 'Docker IO Accounts API']
+- ['reference/api/docker_io_accounts_api.md', 'Reference', 'Docker Hub Accounts API']
 
 - ['jsearch.md', '**HIDDEN**']
 

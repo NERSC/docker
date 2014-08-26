@@ -17,12 +17,13 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/dotcloud/docker/api"
-	"github.com/dotcloud/docker/dockerversion"
-	"github.com/dotcloud/docker/engine"
-	"github.com/dotcloud/docker/pkg/term"
-	"github.com/dotcloud/docker/registry"
-	"github.com/dotcloud/docker/utils"
+	"github.com/docker/docker/api"
+	"github.com/docker/docker/dockerversion"
+	"github.com/docker/docker/engine"
+	"github.com/docker/docker/pkg/log"
+	"github.com/docker/docker/pkg/term"
+	"github.com/docker/docker/registry"
+	"github.com/docker/docker/utils"
 )
 
 var (
@@ -105,7 +106,7 @@ func (cli *DockerCli) call(method, path string, data interface{}, passAuthInfo b
 		if len(body) == 0 {
 			return nil, resp.StatusCode, fmt.Errorf("Error: request returned %s for API route and version %s, check if the server supports the requested API version", http.StatusText(resp.StatusCode), req.URL)
 		}
-		return nil, resp.StatusCode, fmt.Errorf("Error: %s", bytes.TrimSpace(body))
+		return nil, resp.StatusCode, fmt.Errorf("Error response from daemon: %s", bytes.TrimSpace(body))
 	}
 	return resp.Body, resp.StatusCode, nil
 }
@@ -165,7 +166,7 @@ func (cli *DockerCli) streamHelper(method, path string, setRawTerminal bool, in 
 		} else {
 			_, err = utils.StdCopy(stdout, stderr, resp.Body)
 		}
-		utils.Debugf("[stream] End of stdout")
+		log.Debugf("[stream] End of stdout")
 		return err
 	}
 	return nil
@@ -180,7 +181,7 @@ func (cli *DockerCli) resizeTty(id string) {
 	v.Set("h", strconv.Itoa(height))
 	v.Set("w", strconv.Itoa(width))
 	if _, _, err := readBody(cli.call("POST", "/containers/"+id+"/resize?"+v.Encode(), nil, false)); err != nil {
-		utils.Debugf("Error resize: %s", err)
+		log.Debugf("Error resize: %s", err)
 	}
 }
 
@@ -237,7 +238,7 @@ func (cli *DockerCli) getTtySize() (int, int) {
 	}
 	ws, err := term.GetWinsize(cli.terminalFd)
 	if err != nil {
-		utils.Debugf("Error getting size: %s", err)
+		log.Debugf("Error getting size: %s", err)
 		if ws == nil {
 			return 0, 0
 		}

@@ -4,29 +4,81 @@ page_keywords: API, Docker, rcli, REST, documentation
 
 # Docker Remote API
 
- - The Remote API is replacing rcli
- - By default the Docker daemon listens on unix:///var/run/docker.sock
-   and the client must have root access to interact with the daemon
- - If a group named *docker* exists on your system, docker will apply
-   ownership of the socket to the group
+ - The Remote API is replacing `rcli`.
+ - By default the Docker daemon listens on `unix:///var/run/docker.sock`
+   and the client must have `root` access to interact with the daemon.
+ - If a group named `docker` exists on your system, docker will apply
+   ownership of the socket to the group.
  - The API tends to be REST, but for some complex commands, like attach
-   or pull, the HTTP connection is hijacked to transport stdout stdin
-   and stderr
+   or pull, the HTTP connection is hijacked to transport STDOUT, STDIN,
+   and STDERR.
  - Since API version 1.2, the auth configuration is now handled client
-   side, so the client has to send the authConfig as POST in /images/(name)/push
+   side, so the client has to send the `authConfig` as a `POST` in `/images/(name)/push`.
  - authConfig, set as the `X-Registry-Auth` header, is currently a Base64
-   encoded (json) string with credentials:
+   encoded (JSON) string with credentials:
    `{'username': string, 'password': string, 'email': string, 'serveraddress' : string}`
 
+The current version of the API is v1.14
 
+Calling `/info` is the same as calling
+`/v1.14/info`.
 
-The current version of the API is v1.12
+You can still call an old version of the API using
+`/v1.13/info`.
 
-Calling /images/<name>/insert is the same as calling
-/v1.12/images/<name>/insert
+## v1.14
 
-You can still call an old version of the api using
-/v1.12/images/<name>/insert
+### Full Documentation
+
+[*Docker Remote API v1.14*](/reference/api/docker_remote_api_v1.14/)
+
+### What's new
+
+`DELETE /containers/(id)`
+
+**New!**
+When using `force`, the container will be immediately killed with SIGKILL.
+
+`POST /containers/(id)/start`
+
+**New!**
+The `hostConfig` option now accepts the field `CapAdd`, which specifies a list of capabilities
+to add, and the field `CapDrop`, which specifies a list of capabilities to drop.
+
+`POST /images/create`
+
+**New!**
+The `fromImage` and `repo` parameters now supports the `repo:tag` format.
+Consequently,  the `tag` parameter is now obsolete. Using the new format and
+the `tag` parameter at the same time will return an error.
+
+## v1.13
+
+### Full Documentation
+
+[*Docker Remote API v1.13*](/reference/api/docker_remote_api_v1.13/)
+
+### What's new
+
+`GET /containers/(name)/json`
+
+**New!**
+The `HostConfig.Links` field is now filled correctly
+
+**New!**
+`Sockets` parameter added to the `/info` endpoint listing all the sockets the 
+daemon is configured to listen on.
+
+`POST /containers/(name)/start`
+`POST /containers/(name)/stop`
+
+**New!**
+`start` and `stop` will now return 304 if the container's status is not modified
+
+`POST /commit`
+
+**New!**
+Added a `pause` parameter (default `true`) to pause the container during commit
 
 ## v1.12
 
@@ -51,7 +103,7 @@ All the JSON keys are now in CamelCase
 Trusted builds are now Automated Builds - `is_trusted` is now `is_automated`.
 
 **Removed Insert Endpoint**
-The insert endpoint has been removed.
+The `insert` endpoint has been removed.
 
 ## v1.11
 
@@ -74,7 +126,7 @@ after timestamp.
 
 `GET /containers/(id)/logs`
 
-This url is prefered method for getting container logs now.
+This url is preferred method for getting container logs now.
 
 ## v1.10
 
@@ -96,7 +148,7 @@ You can now use the force parameter to force delete of an
 `DELETE /containers/(id)`
 
 **New!**
-You can now use the force paramter to force delete a
+You can now use the force parameter to force delete a
     container, even if it is currently running
 
 ## v1.9
@@ -258,7 +310,7 @@ output is now generated in the client, using the
 
 **New!**
 You can now split stderr from stdout. This is done by
-prefixing a header to each transmition. See
+prefixing a header to each transmission. See
 [`POST /containers/(id)/attach`](
 /reference/api/docker_remote_api_v1.9/#post--containers-(id)-attach "POST /containers/(id)/attach").
 The WebSocket attach is unchanged. Note that attach calls on the
@@ -318,7 +370,7 @@ Image's name added in the events
 ## v1.3
 
 docker v0.5.0
-[51f6c4a](https://github.com/dotcloud/docker/commit/51f6c4a7372450d164c61e0054daf0223ddbd909)
+[51f6c4a](https://github.com/docker/docker/commit/51f6c4a7372450d164c61e0054daf0223ddbd909)
 
 ### Full Documentation
 
@@ -352,13 +404,13 @@ List containers (/containers/json):
 
 Start containers (/containers/<id>/start):
 
- - You can now pass host-specific configuration (e.g. bind mounts) in
+ - You can now pass host-specific configuration (e.g., bind mounts) in
    the POST body for start calls
 
 ## v1.2
 
 docker v0.4.2
-[2e7649b](https://github.com/dotcloud/docker/commit/2e7649beda7c820793bd46766cbc2cfeace7b168)
+[2e7649b](https://github.com/docker/docker/commit/2e7649beda7c820793bd46766cbc2cfeace7b168)
 
 ### Full Documentation
 
@@ -390,7 +442,7 @@ deleted/untagged.
 ## v1.1
 
 docker v0.4.0
-[a8ae398](https://github.com/dotcloud/docker/commit/a8ae398bf52e97148ee7bd0d5868de2e15bd297f)
+[a8ae398](https://github.com/docker/docker/commit/a8ae398bf52e97148ee7bd0d5868de2e15bd297f)
 
 ### Full Documentation
 
@@ -417,7 +469,7 @@ Uses json stream instead of HTML hijack, it looks like this:
 ## v1.0
 
 docker v0.3.4
-[8d73740](https://github.com/dotcloud/docker/commit/8d73740343778651c09160cde9661f5f387b36f4)
+[8d73740](https://github.com/docker/docker/commit/8d73740343778651c09160cde9661f5f387b36f4)
 
 ### Full Documentation
 

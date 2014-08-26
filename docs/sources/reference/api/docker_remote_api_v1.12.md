@@ -6,13 +6,13 @@ page_keywords: API, Docker, rcli, REST, documentation
 
 ## 1. Brief introduction
 
- - The Remote API has replaced rcli
+ - The Remote API has replaced `rcli`.
  - The daemon listens on `unix:///var/run/docker.sock` but you can
    [*Bind Docker to another host/port or a Unix socket*](
    /use/basics/#bind-docker).
  - The API tends to be REST, but for some complex commands, like `attach`
-   or `pull`, the HTTP connection is hijacked to transport `stdout, stdin`
-   and `stderr`
+   or `pull`, the HTTP connection is hijacked to transport `STDOUT`,
+   `STDIN` and `STDERR`.
 
 # 2. Endpoints
 
@@ -90,6 +90,8 @@ List containers
         non-running ones.
     -   **size** – 1/True/true or 0/False/false, Show the containers
         sizes
+    -   **filters** – a JSON encoded value of the filters (a map[string][]string)
+        to process on the images list.
 
     Status Codes:
 
@@ -224,7 +226,7 @@ Return low-level information on the container `id`
                              "Bridge": "",
                              "PortMapping": null
                      },
-                     "SysInitPath": "/home/kitty/go/src/github.com/dotcloud/docker/bin/docker",
+                     "SysInitPath": "/home/kitty/go/src/github.com/docker/docker/bin/docker",
                      "ResolvConfPath": "/etc/resolv.conf",
                      "Volumes": {},
                      "HostConfig": {
@@ -290,7 +292,7 @@ List processes running inside the container `id`
 
      
 
-    -   **ps_args** – ps arguments to use (eg. aux)
+    -   **ps_args** – ps arguments to use (e.g., aux)
 
     Status Codes:
 
@@ -406,6 +408,7 @@ Start the container `id`
 
         {
              "Binds":["/tmp:/tmp"],
+             "Links":["redis3:redis"],
              "LxcConf":{"lxc.utsname":"docker"},
              "PortBindings":{ "22/tcp": [{ "HostPort": "11022" }] },
              "PublishAllPorts":false,
@@ -508,6 +511,46 @@ Kill the container `id`
     -   **404** – no such container
     -   **500** – server error
 
+### Pause a container
+
+`POST /containers/(id)/pause`
+
+Pause the container `id`
+
+    **Example request**:
+
+        POST /containers/e90e34656806/pause HTTP/1.1
+
+    **Example response**:
+
+        HTTP/1.1 204 OK
+
+    Status Codes:
+
+    -   **204** – no error
+    -   **404** – no such container
+    -   **500** – server error
+
+### Unpause a container
+
+`POST /containers/(id)/unpause`
+
+Unpause the container `id`
+
+    **Example request**:
+
+        POST /containers/e90e34656806/unpause HTTP/1.1
+
+    **Example response**:
+
+        HTTP/1.1 204 OK
+
+    Status Codes:
+
+    -   **204** – no error
+    -   **404** – no such container
+    -   **500** – server error
+
 ### Attach to a container
 
 `POST /containers/(id)/attach`
@@ -570,7 +613,7 @@ Attach to the container `id`
 
     `STREAM_TYPE` can be:
 
-    -   0: stdin (will be writen on stdout)
+    -   0: stdin (will be written on stdout)
     -   1: stdout
     -   2: stderr
 
@@ -718,8 +761,8 @@ Copy files or folders of container `id`
      
 
     -   **all** – 1/True/true or 0/False/false, default false
-    -   **filters** – a json encoded value of the filters (a map[string][]string) to process on the images list.
-        
+    -   **filters** – a JSON encoded value of the filters (a map[string][]string) to process on the images list.
+
 
 
 ### Create an image
@@ -767,30 +810,7 @@ Create an image, either by pull it from the registry or by importing it
     -   **200** – no error
     -   **500** – server error
 
-### Insert a file in an image
 
-`POST /images/(name)/insert`
-
-Insert a file from `url` in the image `name` at `path`
-
-    **Example request**:
-
-        POST /images/test/insert?path=/usr&url=myurl HTTP/1.1
-
-    **Example response**:
-
-        HTTP/1.1 200 OK
-        Content-Type: application/json
-
-        {"status":"Inserting..."}
-        {"status":"Inserting", "progress":"1/? (n/a)", "progressDetail":{"current":1}}
-        {"error":"Invalid..."}
-        ...
-
-    Status Codes:
-
-    -   **200** – no error
-    -   **500** – server error
 
 ### Inspect an image
 
@@ -824,8 +844,8 @@ Return low-level information on the image `name`
                              "OpenStdin":true,
                              "StdinOnce":false,
                              "Env":null,
-                             "Cmd": ["/bin/bash"]
-                             ,"Dns":null,
+                             "Cmd": ["/bin/bash"],
+                             "Dns":null,
                              "Image":"base",
                              "Volumes":null,
                              "VolumesFrom":"",
@@ -896,11 +916,20 @@ Push the image `name` on the registry
         {"error":"Invalid..."}
         ...
 
+    If you wish to push an image on to a private registry, that image must already have been tagged
+    into a repository which references that registry host name and port.  This repository name should 
+    then be used in the URL. This mirrors the flow of the CLI.
+
+    **Example request**:
+
+        POST /images/registry.acme.com:5000/test/push HTTP/1.1    
+    
+
     Query Parameters:
 
      
 
-    -   **registry** – the registry you wan to push, optional
+    -   **tag** – the tag to associate with the image on the registry, optional
 
     Request Headers:
 
@@ -983,7 +1012,7 @@ Remove the image `name` from the filesystem
 
 `GET /images/search`
 
-Search for an image on [Docker.io](https://index.docker.io).
+Search for an image on [Docker Hub](https://hub.docker.com).
 
 > **Note**:
 > The response keys have changed from API v1.6 to reflect the JSON
@@ -1135,9 +1164,15 @@ Display system-wide information
         {
              "Containers":11,
              "Images":16,
+             "Driver":"btrfs",
+             "ExecutionDriver":"native-0.1",
+             "KernelVersion":"3.12.0-1-amd64"
              "Debug":false,
              "NFd": 11,
              "NGoroutines":21,
+             "NEventsListener":0,
+             "InitPath":"/usr/bin/docker",
+             "IndexServerAddress":["https://index.docker.io/v1/"],
              "MemoryLimit":true,
              "SwapLimit":false,
              "IPv4Forwarding":true
@@ -1164,6 +1199,7 @@ Show the docker version information
         Content-Type: application/json
 
         {
+             "ApiVersion":"1.12",
              "Version":"0.2.2",
              "GitCommit":"5a2a5cc+CHANGES",
              "GoVersion":"go1.0.3"
@@ -1253,7 +1289,7 @@ Create a new image from a container's changes
     -   **repo** – repository
     -   **tag** – tag
     -   **m** – commit message
-    -   **author** – author (eg. "John Hannibal Smith
+    -   **author** – author (e.g., "John Hannibal Smith
         <[hannibal@a-team.com](mailto:hannibal%40a-team.com)>")
 
     Status Codes:

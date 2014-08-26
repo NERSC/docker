@@ -5,15 +5,62 @@
 #include <sys/types.h>
 #include <pwd.h>
 #include <syslog.h>
-     
-     
+#include <signal.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <wait.h>
 
-
+#define DOCK "/usr/bin/docker"
 
 
 #define MAX_LEN 512
+char name[30];
+int quit=0;
 
+void sig_handler(int signum);
 
+int dkill(){
+ struct sockaddr_un address;
+ int  socket_fd, nbytes;
+ char buffer[1024];
+
+ socket_fd = socket(PF_UNIX, SOCK_STREAM, 0);
+ if(socket_fd < 0)
+ {
+  printf("socket() failed\n");
+  return 1;
+ }
+
+ /* start with a clean address structure */
+ memset(&address, 0, sizeof(struct sockaddr_un));
+
+ address.sun_family = AF_UNIX;
+ snprintf(address.sun_path, 1024, "/var/run/docker.sock");
+
+ if(connect(socket_fd, (struct sockaddr *) &address, sizeof(struct sockaddr_un)) != 0) {
+  printf("connect() failed\n");
+  return 1;
+ }
+
+ nbytes = snprintf(buffer, 1024, "POST /v1.12/containers/%s/kill?signal=KILL HTTP/1.1\r\nHost: /var/run/docker.sock\r\nUser-Agent: mydock/0.11.1-dev\r\nContent-Length: 0\r\nContent-Type: plain/text\r\nAccept-Encoding: gzip\r\n\r\n",name);
+ write(socket_fd, buffer, nbytes);
+
+ nbytes = read(socket_fd, buffer, 1024);
+ buffer[nbytes] = 0;
+
+ //printf("MESSAGE FROM SERVER: %s\n", buffer);
+
+ close(socket_fd);
+}
+
+// Define the function to be called when ctrl-c (SIGINT) signal is sent to process
+void sig_handler(int signum)
+{
+   printf("Caught signal %d. Killing %s\n",signum,name);
+   quit=1;
+   //exit(signum);
+}
+ 
 int main(int argc,char *argv[])
 {
     char **newargv;
@@ -27,6 +74,9 @@ int main(int argc,char *argv[])
     char **login = (char *[]){"docker", "login",NULL};
     char **pull = (char *[]){"docker", "pull","ubuntu",NULL};
     char command[MAX_LEN];
+    pid_t pid;
+    pid_t wpid;
+    int pidstat;
 
     command[0] = 0;
     for (i=1;i<argc;i++){
@@ -42,13 +92,13 @@ int main(int argc,char *argv[])
      
     openlog ("docker", LOG_CONS | LOG_PID | LOG_NDELAY, LOG_DAEMON);
     if (strcmp(argv[1],"login")==0){
-      ret=execv("/usr/bin/docker",login);
+      ret=execv(DOCK,login);
       perror("Failed exec");
       return -1;
     }
     else if (strcmp(argv[1],"pull")==0){
       pull[2]=argv[2];
-      ret=execv("/usr/bin/docker",pull);
+      ret=execv(DOCK,pull);
       perror("Failed exec");
       return -1;
     }
@@ -72,7 +122,7 @@ int main(int argc,char *argv[])
 
    syslog (LOG_NOTICE, "Start: (uid=%d) %s", getuid(),command );
 
-    newargv=(char **)malloc(sizeof(char *)*(argc+16));
+    newargv=(char **)malloc(sizeof(char *)*(argc+22));
     if (newargv==NULL){
       fprintf(stderr,"Malloc failed\n");
       return -1;
@@ -100,12 +150,38 @@ int main(int argc,char *argv[])
     newargv[12]="-w";
     newargv[13]=pas->pw_dir;
     newargv[14]="--rm";
-    memcpy(&newargv[15], &argv[1], sizeof(char *) * (argc));
+    newargv[15]="--net=host";
+    newargv[16]="--name";
+    sprintf(name, "%d-%d", getuid(),getpid());
+    newargv[17]=name;
+    newargv[18]="-e";
+    newargv[19]="HOME";
+    memcpy(&newargv[20], &argv[1], sizeof(char *) * (argc));
     //printf("%d %d\n",getuid(),geteuid());
     /*for (i=0;i<argc+4;i++){
      * printf("%d %s\n",i,newargv[i]);
      } */
     closelog ();
-    ret=execv("/usr/bin/docker",newargv);
-    perror("Failed exec");
+    pid=fork();
+    if (pid==0){
+      ret=execv(DOCK,newargv);
+      perror("Failed exec");
+    }
+    else if (pid<0){
+      perror("Fork failed");
+    }
+    else {
+      signal(SIGINT, sig_handler);
+      signal(SIGTERM, sig_handler);
+      signal(SIGKILL, sig_handler);
+      while (! quit){
+        wpid=waitpid(pid,&pidstat,WNOHANG);
+        if (wpid && WIFEXITED(pidstat)) {
+            quit=1;
+        }
+        sleep(1);
+      }
+     // Do cleanup
+      dkill();
+    }
 }

@@ -61,7 +61,7 @@ void sig_handler(int signum)
    //exit(signum);
 }
  
-int main(int argc,char *argv[])
+int main(int argc,char *argv[],char *envp[])
 {
     char **newargv;
     int i;
@@ -77,6 +77,15 @@ int main(int argc,char *argv[])
     pid_t pid;
     pid_t wpid;
     int pidstat;
+    char **env, **sant;
+
+    for (env=envp,sant=envp;*env!=NULL;env++){
+      if (strstr(*env,"PATH=") || strstr(*env,"HOME=")){
+        *sant=*env;
+        sant++;
+      }
+    }
+    *sant=NULL;
 
     command[0] = 0;
     for (i=1;i<argc;i++){
@@ -86,19 +95,19 @@ int main(int argc,char *argv[])
        }
        strcat(command,argv[i]);
        strcat(command," ");
-       tot+=len;
+       tot+=(len+1);
     }
     setlogmask (LOG_UPTO (LOG_NOTICE));
      
     openlog ("docker", LOG_CONS | LOG_PID | LOG_NDELAY, LOG_DAEMON);
     if (strcmp(argv[1],"login")==0){
-      ret=execv(DOCK,login);
+      ret=execve(DOCK,login,envp);
       perror("Failed exec");
       return -1;
     }
     else if (strcmp(argv[1],"pull")==0){
       pull[2]=argv[2];
-      ret=execv(DOCK,pull);
+      ret=execve(DOCK,pull,envp);
       perror("Failed exec");
       return -1;
     }
@@ -164,7 +173,7 @@ int main(int argc,char *argv[])
     closelog ();
     pid=fork();
     if (pid==0){
-      ret=execv(DOCK,newargv);
+      ret=execve(DOCK,newargv,envp);
       perror("Failed exec");
     }
     else if (pid<0){

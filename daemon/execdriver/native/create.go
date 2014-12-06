@@ -125,6 +125,8 @@ func (d *driver) createNetwork(container *libcontainer.Config, c *execdriver.Com
 }
 
 func (d *driver) setPrivileged(container *libcontainer.Config) (err error) {
+        // Added by RSC to disable privileged mode
+	return nil
 	container.Capabilities = capabilities.GetAllCapabilities()
 	container.Cgroups.AllowAllDevices = true
 

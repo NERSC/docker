@@ -23,12 +23,12 @@
 		flag.Var(&flagVal, []string{"name"}, "help message for flagname")
 	For such flags, the default value is just the initial value of the variable.
 
-	You can also add "deprecated" flags, they are still usable, bur are not shown
+	You can also add "deprecated" flags, they are still usable, but are not shown
 	in the usage and will display a warning when you try to use them:
-		var ip = flag.Int([]string{"f", "#flagname", "-flagname"}, 1234, "help message for flagname")
-	this will display: `Warning: '-flagname' is deprecated, it will be replaced by '--flagname' soon. See usage.` and
+		var ip = flag.Int([]string{"#f", "#flagname", "-flagname2"}, 1234, "help message for flagname")
+	this will display: `Warning: '--flagname' is deprecated, it will be replaced by '--flagname2' soon. See usage.` and
 		var ip = flag.Int([]string{"f", "#flagname"}, 1234, "help message for flagname")
-	will display: `Warning: '-t' is deprecated, it will be removed soon. See usage.`
+	will display: `Warning: '-f' is deprecated, it will be removed soon. See usage.`
 
 	You can also group one letter flags, bif you declare
 		var v = flag.Bool([]string{"v", "-verbose"}, false, "help message for verbose")
@@ -317,8 +317,13 @@ func (p flagSlice) Swap(i, j int) { p[i], p[j] = p[j], p[i] }
 // sortFlags returns the flags as a slice in lexicographical sorted order.
 func sortFlags(flags map[string]*Flag) []*Flag {
 	var list flagSlice
-	for _, f := range flags {
+
+	// The sorted list is based on the first name, when flag map might use the other names.
+	nameMap := make(map[string]string)
+
+	for n, f := range flags {
 		fName := strings.TrimPrefix(f.Names[0], "#")
+		nameMap[fName] = n
 		if len(f.Names) == 1 {
 			list = append(list, fName)
 			continue
@@ -338,7 +343,7 @@ func sortFlags(flags map[string]*Flag) []*Flag {
 	sort.Sort(list)
 	result := make([]*Flag, len(list))
 	for i, name := range list {
-		result[i] = flags[name]
+		result[i] = flags[nameMap[name]]
 	}
 	return result
 }
@@ -389,10 +394,20 @@ func (f *FlagSet) Lookup(name string) *Flag {
 	return f.formal[name]
 }
 
+// Indicates whether the specified flag was specified at all on the cmd line
+func (f *FlagSet) IsSet(name string) bool {
+	return f.actual[name] != nil
+}
+
 // Lookup returns the Flag structure of the named command-line flag,
 // returning nil if none exists.
 func Lookup(name string) *Flag {
 	return CommandLine.formal[name]
+}
+
+// Indicates whether the specified flag was specified at all on the cmd line
+func IsSet(name string) bool {
+	return CommandLine.IsSet(name)
 }
 
 // Set sets the value of the named flag.
@@ -470,6 +485,23 @@ func defaultUsage(f *FlagSet) {
 var Usage = func() {
 	fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
 	PrintDefaults()
+}
+
+// FlagCount returns the number of flags that have been defined.
+func (f *FlagSet) FlagCount() int { return len(sortFlags(f.formal)) }
+
+// FlagCountUndeprecated returns the number of undeprecated flags that have been defined.
+func (f *FlagSet) FlagCountUndeprecated() int {
+	count := 0
+	for _, flag := range sortFlags(f.formal) {
+		for _, name := range flag.Names {
+			if name[0] != '#' {
+				count++
+				break
+			}
+		}
+	}
+	return count
 }
 
 // NFlag returns the number of flags that have been set.

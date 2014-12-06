@@ -81,7 +81,7 @@ of the root directory which shows us what looks like a typical Linux
 file system.
 
 You can play around inside this container and when you're done you can
-use the `exit` command to finish.
+use the `exit` command or enter Ctrl-D to finish.
 
     root@af8bae53bdd3:/# exit
 
@@ -126,8 +126,7 @@ identifies a container so we can work with it.
 > on we'll see a shorter ID and some ways to name our containers to make
 > working with them easier.
 
-We can use this container ID to see what's happening with our `hello
-world` daemon.
+We can use this container ID to see what's happening with our `hello world` daemon.
 
 Firstly let's make sure our container is running. We can
 do that with the `docker ps` command. The `docker ps` command queries

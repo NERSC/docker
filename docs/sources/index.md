@@ -77,11 +77,23 @@ The [Understanding Docker section](introduction/understanding-docker.md) will he
 
 ### Installation Guides
 
-The [installation section](/installation/#installation) will show you how to install
-Docker on a variety of platforms.
+The [installation section](/installation/#installation) will show you how to
+install Docker on a variety of platforms.
 
 
 ### Docker User Guide
 
-To learn about Docker in more detail and to answer questions about usage and implementation, check out the [Docker User Guide](/userguide/).
+To learn about Docker in more detail and to answer questions about usage and
+implementation, check out the [Docker User Guide](/userguide/).
+
+## Release Notes
+
+A summary of the changes in each release in the current series can now be found
+on the separate [Release Notes page](/release-notes/)
+
+## Licensing
+
+Docker is licensed under the Apache License, Version 2.0. See
+[LICENSE](https://github.com/docker/docker/blob/master/LICENSE) for the full
+license text.
 

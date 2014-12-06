@@ -24,12 +24,12 @@ Docker itself provides access to Docker Hub services via the `docker search`,
 
 ### Account creation and login
 Typically, you'll want to start by creating an account on Docker Hub (if you haven't
-already) and logging in. You can create your account directly on 
+already) and logging in. You can create your account directly on
 [Docker Hub](https://hub.docker.com/account/signup/), or by running:
 
     $ sudo docker login
 
-This will prompt you for a user name, which will become the public namespace for your 
+This will prompt you for a user name, which will become the public namespace for your
 public repositories.
 If your user name is available, Docker will prompt you to enter a password and your
 e-mail address. It will then automatically log you in. You can now commit and
@@ -66,6 +66,8 @@ Once you've found the image you want, you can download it with `docker pull <ima
     539c0211cd76: Download complete
     511136ea3c5a: Download complete
     7064731afe90: Download complete
+
+    Status: Downloaded newer image for centos
 
 You now have an image from which you can run containers.
 
@@ -124,7 +126,7 @@ triggering a build and update when you push a commit.
 
 1.  Create a [Docker Hub account](https://hub.docker.com/) and login.
 2.  Link your GitHub or BitBucket account through the ["Link Accounts"](https://registry.hub.docker.com/account/accounts/) menu.
-3.  [Configure an Automated Build](https://registry.hub.docker.com/builds/).
+3.  [Configure an Automated Build](https://registry.hub.docker.com/builds/add/).
 4.  Pick a GitHub or BitBucket project that has a `Dockerfile` that you want to build.
 5.  Pick the branch you want to build (the default is the `master` branch).
 6.  Give the Automated Build a name.
@@ -159,6 +161,9 @@ Webhooks are attached to your repositories and allow you to trigger an
 event when an image or updated image is pushed to the repository. With
 a webhook you can specify a target URL and a JSON payload that will be
 delivered when the image is pushed.
+
+See the Docker Hub documentation for [more information on
+webhooks](http://docs.docker.com/docker-hub/repos/#webhooks)
 
 ## Next steps
 

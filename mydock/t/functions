@@ -1,0 +1,12 @@
+#!/bin/sh
+
+passfail() {
+  RC=${1}
+  if [ $RC -eq 0 ] ; then
+    echo "Passed"
+    return
+  else
+    echo "Failed"
+  fi
+  exit
+}

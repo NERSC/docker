@@ -14,7 +14,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"runtime"
 
 	"github.com/kr/pty"
 

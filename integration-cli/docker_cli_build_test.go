@@ -1066,6 +1066,31 @@ ADD . /`,
 	logDone("build - add etc directory to root")
 }
 
+// Testing #9401
+func TestBuildAddPreservesFilesSpecialBits(t *testing.T) {
+	name := "testaddpreservesfilesspecialbits"
+	defer deleteImages(name)
+	ctx, err := fakeContext(`FROM busybox
+ADD suidbin /usr/bin/suidbin
+RUN chmod 4755 /usr/bin/suidbin
+RUN [ $(ls -l /usr/bin/suidbin | awk '{print $1}') = '-rwsr-xr-x' ]
+ADD ./data/ /
+RUN [ $(ls -l /usr/bin/suidbin | awk '{print $1}') = '-rwsr-xr-x' ]`,
+		map[string]string{
+			"suidbin":             "suidbin",
+			"/data/usr/test_file": "test1",
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ctx.Close()
+
+	if _, err := buildImageFromContext(name, ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	logDone("build - add preserves files special bits")
+}
+
 func TestBuildCopySingleFileToRoot(t *testing.T) {
 	name := "testcopysinglefiletoroot"
 	defer deleteImages(name)
@@ -1283,6 +1308,133 @@ COPY https://index.docker.io/robots.txt /`,
 		t.Fatalf("Error should be about disallowed remote source, got err: %s, out: %q", err, out)
 	}
 	logDone("build - copy - disallow copy from remote")
+}
+
+func TestBuildAddBadLinks(t *testing.T) {
+	const (
+		dockerfile = `
+			FROM scratch
+			ADD links.tar /
+			ADD foo.txt /symlink/
+			`
+		targetFile = "foo.txt"
+	)
+	var (
+		name = "test-link-absolute"
+	)
+	defer deleteImages(name)
+	ctx, err := fakeContext(dockerfile, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ctx.Close()
+
+	tempDir, err := ioutil.TempDir("", "test-link-absolute-temp-")
+	if err != nil {
+		t.Fatalf("failed to create temporary directory: %s", tempDir)
+	}
+	defer os.RemoveAll(tempDir)
+
+	symlinkTarget := fmt.Sprintf("/../../../../../../../../../../../..%s", tempDir)
+	tarPath := filepath.Join(ctx.Dir, "links.tar")
+	nonExistingFile := filepath.Join(tempDir, targetFile)
+	fooPath := filepath.Join(ctx.Dir, targetFile)
+
+	tarOut, err := os.Create(tarPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tarWriter := tar.NewWriter(tarOut)
+
+	header := &tar.Header{
+		Name:     "symlink",
+		Typeflag: tar.TypeSymlink,
+		Linkname: symlinkTarget,
+		Mode:     0755,
+		Uid:      0,
+		Gid:      0,
+	}
+
+	err = tarWriter.WriteHeader(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tarWriter.Close()
+	tarOut.Close()
+
+	foo, err := os.Create(fooPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer foo.Close()
+
+	if _, err := foo.WriteString("test"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := buildImageFromContext(name, ctx, true); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(nonExistingFile); err == nil || err != nil && !os.IsNotExist(err) {
+		t.Fatalf("%s shouldn't have been written and it shouldn't exist", nonExistingFile)
+	}
+
+	logDone("build - ADD must add files in container")
+}
+
+func TestBuildAddBadLinksVolume(t *testing.T) {
+	const (
+		dockerfileTemplate = `
+		FROM busybox
+		RUN ln -s /../../../../../../../../%s /x
+		VOLUME /x
+		ADD foo.txt /x/`
+		targetFile = "foo.txt"
+	)
+	var (
+		name       = "test-link-absolute-volume"
+		dockerfile = ""
+	)
+	defer deleteImages(name)
+
+	tempDir, err := ioutil.TempDir("", "test-link-absolute-volume-temp-")
+	if err != nil {
+		t.Fatalf("failed to create temporary directory: %s", tempDir)
+	}
+	defer os.RemoveAll(tempDir)
+
+	dockerfile = fmt.Sprintf(dockerfileTemplate, tempDir)
+	nonExistingFile := filepath.Join(tempDir, targetFile)
+
+	ctx, err := fakeContext(dockerfile, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ctx.Close()
+	fooPath := filepath.Join(ctx.Dir, targetFile)
+
+	foo, err := os.Create(fooPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer foo.Close()
+
+	if _, err := foo.WriteString("test"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := buildImageFromContext(name, ctx, true); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(nonExistingFile); err == nil || err != nil && !os.IsNotExist(err) {
+		t.Fatalf("%s shouldn't have been written and it shouldn't exist", nonExistingFile)
+	}
+
+	logDone("build - ADD should add files in volume")
 }
 
 // Issue #5270 - ensure we throw a better error than "unexpected EOF"
@@ -3152,6 +3304,118 @@ RUN cat /existing-directory-trailing-slash/test/foo | grep Hi`
 	logDone("build - ADD tar")
 }
 
+func TestBuildAddTarXz(t *testing.T) {
+	name := "testbuildaddtarxz"
+	defer deleteImages(name)
+
+	ctx := func() *FakeContext {
+		dockerfile := `
+			FROM busybox
+			ADD test.tar.xz /
+			RUN cat /test/foo | grep Hi`
+		tmpDir, err := ioutil.TempDir("", "fake-context")
+		testTar, err := os.Create(filepath.Join(tmpDir, "test.tar"))
+		if err != nil {
+			t.Fatalf("failed to create test.tar archive: %v", err)
+		}
+		defer testTar.Close()
+
+		tw := tar.NewWriter(testTar)
+
+		if err := tw.WriteHeader(&tar.Header{
+			Name: "test/foo",
+			Size: 2,
+		}); err != nil {
+			t.Fatalf("failed to write tar file header: %v", err)
+		}
+		if _, err := tw.Write([]byte("Hi")); err != nil {
+			t.Fatalf("failed to write tar file content: %v", err)
+		}
+		if err := tw.Close(); err != nil {
+			t.Fatalf("failed to close tar archive: %v", err)
+		}
+		xzCompressCmd := exec.Command("xz", "test.tar")
+		xzCompressCmd.Dir = tmpDir
+		out, _, err := runCommandWithOutput(xzCompressCmd)
+		if err != nil {
+			t.Fatal(err, out)
+		}
+
+		if err := ioutil.WriteFile(filepath.Join(tmpDir, "Dockerfile"), []byte(dockerfile), 0644); err != nil {
+			t.Fatalf("failed to open destination dockerfile: %v", err)
+		}
+		return &FakeContext{Dir: tmpDir}
+	}()
+
+	defer ctx.Close()
+
+	if _, err := buildImageFromContext(name, ctx, true); err != nil {
+		t.Fatalf("build failed to complete for TestBuildAddTarXz: %v", err)
+	}
+
+	logDone("build - ADD tar.xz")
+}
+
+func TestBuildAddTarXzGz(t *testing.T) {
+	name := "testbuildaddtarxzgz"
+	defer deleteImages(name)
+
+	ctx := func() *FakeContext {
+		dockerfile := `
+			FROM busybox
+			ADD test.tar.xz.gz /
+			RUN ls /test.tar.xz.gz`
+		tmpDir, err := ioutil.TempDir("", "fake-context")
+		testTar, err := os.Create(filepath.Join(tmpDir, "test.tar"))
+		if err != nil {
+			t.Fatalf("failed to create test.tar archive: %v", err)
+		}
+		defer testTar.Close()
+
+		tw := tar.NewWriter(testTar)
+
+		if err := tw.WriteHeader(&tar.Header{
+			Name: "test/foo",
+			Size: 2,
+		}); err != nil {
+			t.Fatalf("failed to write tar file header: %v", err)
+		}
+		if _, err := tw.Write([]byte("Hi")); err != nil {
+			t.Fatalf("failed to write tar file content: %v", err)
+		}
+		if err := tw.Close(); err != nil {
+			t.Fatalf("failed to close tar archive: %v", err)
+		}
+
+		xzCompressCmd := exec.Command("xz", "test.tar")
+		xzCompressCmd.Dir = tmpDir
+		out, _, err := runCommandWithOutput(xzCompressCmd)
+		if err != nil {
+			t.Fatal(err, out)
+		}
+
+		gzipCompressCmd := exec.Command("gzip", "test.tar.xz")
+		gzipCompressCmd.Dir = tmpDir
+		out, _, err = runCommandWithOutput(gzipCompressCmd)
+		if err != nil {
+			t.Fatal(err, out)
+		}
+
+		if err := ioutil.WriteFile(filepath.Join(tmpDir, "Dockerfile"), []byte(dockerfile), 0644); err != nil {
+			t.Fatalf("failed to open destination dockerfile: %v", err)
+		}
+		return &FakeContext{Dir: tmpDir}
+	}()
+
+	defer ctx.Close()
+
+	if _, err := buildImageFromContext(name, ctx, true); err != nil {
+		t.Fatalf("build failed to complete for TestBuildAddTarXz: %v", err)
+	}
+
+	logDone("build - ADD tar.xz.gz")
+}
+
 func TestBuildFromGIT(t *testing.T) {
 	name := "testbuildfromgit"
 	defer deleteImages(name)
@@ -3522,4 +3786,131 @@ func TestBuildWithTabs(t *testing.T) {
 		t.Fatalf("Missing tabs.\nGot:%s\nExp:%s", res, expected)
 	}
 	logDone("build - with tabs")
+}
+
+func TestBuildStderr(t *testing.T) {
+	// This test just makes sure that no non-error output goes
+	// to stderr
+	name := "testbuildstderr"
+	defer deleteImages(name)
+	_, _, stderr, err := buildImageWithStdoutStderr(name,
+		"FROM busybox\nRUN echo one", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stderr != "" {
+		t.Fatal("Stderr should have been empty, instead its: %q", stderr)
+	}
+	logDone("build - testing stderr")
+}
+
+func TestBuildChownSingleFile(t *testing.T) {
+	name := "testbuildchownsinglefile"
+	defer deleteImages(name)
+
+	ctx, err := fakeContext(`
+FROM busybox
+COPY test /
+RUN ls -l /test
+RUN [ $(ls -l /test | awk '{print $3":"$4}') = 'root:root' ]
+`, map[string]string{
+		"test": "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ctx.Close()
+
+	if err := os.Chown(filepath.Join(ctx.Dir, "test"), 4242, 4242); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := buildImageFromContext(name, ctx, true); err != nil {
+		t.Fatal(err)
+	}
+
+	logDone("build - change permission on single file")
+}
+
+func TestBuildSymlinkBreakout(t *testing.T) {
+	name := "testbuildsymlinkbreakout"
+	tmpdir, err := ioutil.TempDir("", name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpdir)
+	ctx := filepath.Join(tmpdir, "context")
+	if err := os.MkdirAll(ctx, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := ioutil.WriteFile(filepath.Join(ctx, "Dockerfile"), []byte(`
+	from busybox
+	add symlink.tar /
+	add inject /symlink/
+	`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	inject := filepath.Join(ctx, "inject")
+	if err := ioutil.WriteFile(inject, nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(filepath.Join(ctx, "symlink.tar"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := tar.NewWriter(f)
+	w.WriteHeader(&tar.Header{
+		Name:     "symlink2",
+		Typeflag: tar.TypeSymlink,
+		Linkname: "/../../../../../../../../../../../../../../",
+		Uid:      os.Getuid(),
+		Gid:      os.Getgid(),
+	})
+	w.WriteHeader(&tar.Header{
+		Name:     "symlink",
+		Typeflag: tar.TypeSymlink,
+		Linkname: filepath.Join("symlink2", tmpdir),
+		Uid:      os.Getuid(),
+		Gid:      os.Getgid(),
+	})
+	w.Close()
+	f.Close()
+	if _, err := buildImageFromContext(name, &FakeContext{Dir: ctx}, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(tmpdir, "inject")); err == nil {
+		t.Fatal("symlink breakout - inject")
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	logDone("build - symlink breakout")
+}
+
+func TestBuildXZHost(t *testing.T) {
+	name := "testbuildxzhost"
+	defer deleteImages(name)
+
+	ctx, err := fakeContext(`
+FROM busybox
+ADD xz /usr/local/sbin/
+RUN chmod 755 /usr/local/sbin/xz
+ADD test.xz /
+RUN [ ! -e /injected ]`,
+		map[string]string{
+			"test.xz": "\xfd\x37\x7a\x58\x5a\x00\x00\x04\xe6\xd6\xb4\x46\x02\x00" +
+				"\x21\x01\x16\x00\x00\x00\x74\x2f\xe5\xa3\x01\x00\x3f\xfd" +
+				"\x37\x7a\x58\x5a\x00\x00\x04\xe6\xd6\xb4\x46\x02\x00\x21",
+			"xz": "#!/bin/sh\ntouch /injected",
+		})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ctx.Close()
+
+	if _, err := buildImageFromContext(name, ctx, true); err != nil {
+		t.Fatal(err)
+	}
+
+	logDone("build - xz host is being used")
 }

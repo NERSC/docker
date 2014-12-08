@@ -180,7 +180,7 @@ func (cli *DockerCli) CmdBuild(args ...string) error {
 	// FIXME: ProgressReader shouldn't be this annoying to use
 	if context != nil {
 		sf := utils.NewStreamFormatter(false)
-		body = utils.ProgressReader(context, 0, cli.err, sf, true, "", "Sending build context to Docker daemon")
+		body = utils.ProgressReader(context, 0, cli.out, sf, true, "", "Sending build context to Docker daemon")
 	}
 	// Send the build context
 	v := &url.Values{}
@@ -543,6 +543,9 @@ func (cli *DockerCli) CmdInfo(args ...string) error {
 		}
 		if initPath := remoteInfo.Get("InitPath"); initPath != "" {
 			fmt.Fprintf(cli.out, "Init Path: %s\n", initPath)
+		}
+		if root := remoteInfo.Get("DockerRootDir"); root != "" {
+			fmt.Fprintf(cli.out, "Docker Root Dir: %s\n", root)
 		}
 	}
 
@@ -1971,6 +1974,10 @@ func (cli *DockerCli) CmdAttach(args ...string) error {
 		tty    = config.GetBool("Tty")
 	)
 
+	if err := cli.CheckTtyInput(!*noStdin, tty); err != nil {
+		return err
+	}
+
 	if tty && cli.isTerminalOut {
 		if err := cli.monitorTtySize(cmd.Arg(0), false); err != nil {
 			log.Debugf("Error monitoring TTY size: %s", err)
@@ -2285,7 +2292,11 @@ func (cli *DockerCli) CmdRun(args ...string) error {
 		return nil
 	}
 
-	if *flDetach {
+	if !*flDetach {
+		if err := cli.CheckTtyInput(config.AttachStdin, config.Tty); err != nil {
+			return err
+		}
+	} else {
 		if fl := cmd.Lookup("attach"); fl != nil {
 			flAttach = fl.Value.(*opts.ListOpts)
 			if flAttach.Len() != 0 {
@@ -2597,7 +2608,11 @@ func (cli *DockerCli) CmdExec(args ...string) error {
 		return nil
 	}
 
-	if execConfig.Detach {
+	if !execConfig.Detach {
+		if err := cli.CheckTtyInput(execConfig.AttachStdin, execConfig.Tty); err != nil {
+			return err
+		}
+	} else {
 		if _, _, err := readBody(cli.call("POST", "/exec/"+execID+"/start", execConfig, false)); err != nil {
 			return err
 		}

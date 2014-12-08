@@ -328,6 +328,46 @@ func deleteAllContainers() error {
 	return nil
 }
 
+func getPausedContainers() (string, error) {
+	getPausedContainersCmd := exec.Command(dockerBinary, "ps", "-f", "status=paused", "-q", "-a")
+	out, exitCode, err := runCommandWithOutput(getPausedContainersCmd)
+	if exitCode != 0 && err == nil {
+		err = fmt.Errorf("failed to get a list of paused containers: %v\n", out)
+	}
+
+	return out, err
+}
+
+func unpauseContainer(container string) error {
+	unpauseCmd := exec.Command(dockerBinary, "unpause", container)
+	exitCode, err := runCommand(unpauseCmd)
+	if exitCode != 0 && err == nil {
+		err = fmt.Errorf("failed to unpause container")
+	}
+
+	return nil
+}
+
+func unpauseAllContainers() error {
+	containers, err := getPausedContainers()
+	if err != nil {
+		fmt.Println(containers)
+		return err
+	}
+
+	containers = strings.Replace(containers, "\n", " ", -1)
+	containers = strings.Trim(containers, " ")
+	containerList := strings.Split(containers, " ")
+
+	for _, value := range containerList {
+		if err = unpauseContainer(value); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func deleteImages(images ...string) error {
 	args := make([]string, 1, 2)
 	args[0] = "rmi"
@@ -594,6 +634,25 @@ func buildImageWithOut(name, dockerfile string, useCache bool) (string, string, 
 		return "", out, err
 	}
 	return id, out, nil
+}
+
+func buildImageWithStdoutStderr(name, dockerfile string, useCache bool) (string, string, string, error) {
+	args := []string{"build", "-t", name}
+	if !useCache {
+		args = append(args, "--no-cache")
+	}
+	args = append(args, "-")
+	buildCmd := exec.Command(dockerBinary, args...)
+	buildCmd.Stdin = strings.NewReader(dockerfile)
+	stdout, stderr, exitCode, err := runCommandWithStdoutStderr(buildCmd)
+	if err != nil || exitCode != 0 {
+		return "", stdout, stderr, fmt.Errorf("failed to build the image: %s", stdout)
+	}
+	id, err := getIDByName(name)
+	if err != nil {
+		return "", stdout, stderr, err
+	}
+	return id, stdout, stderr, nil
 }
 
 func buildImage(name, dockerfile string, useCache bool) (string, error) {

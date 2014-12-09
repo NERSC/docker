@@ -19,3 +19,6 @@ fixperms:
 test:
 	@sh ./t/lockdown.t
 	@sh ./t/run.t
+
+clean:
+	rm mydock

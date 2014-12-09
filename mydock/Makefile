@@ -8,7 +8,8 @@ mydock: mydock.c
 	gcc -o mydock ./mydock.c 
 
 install:
-	install -m 2775 -g docker mydock $(DESTDIR)/usr/bin/mydock
+	#install -m 2775 -g docker mydock $(DESTDIR)/usr/bin/mydock
+	install -m 2775 mydock $(DESTDIR)/usr/bin/mydock
 	
 fixperms:
 	chgrp docker ./mydock

@@ -15,3 +15,17 @@ index f060f63..e6ceb8c 100644
  
  	static const struct option longopts[] = {
  		{"nspid", required_argument, NULL, 'n'},
+diff --git a/vendor/src/github.com/docker/libcontainer/namespaces/nsenter/nsenter.c b/vendor/src/github.com/docker/libcontainer/namespaces/n
+index f060f63..4ef905c 100644
+--- a/vendor/src/github.com/docker/libcontainer/namespaces/nsenter/nsenter.c
++++ b/vendor/src/github.com/docker/libcontainer/namespaces/nsenter/nsenter.c
+@@ -61,6 +61,9 @@ void get_args(int *argc, char ***argv)
+ #define _GNU_SOURCE
+ #include <sched.h>
+ #include "syscall.h"
++#ifdef SYS_set_ns
++#define SYS_setns  __NR_setns
++#endif
+ #ifdef SYS_setns
+ int setns(int fd, int nstype)
+ {

@@ -64,7 +64,7 @@ void sig_handler(int signum)
 int main(int argc,char *argv[],char *envp[])
 {
     char **newargv;
-    int i;
+    int i,start;
     int ret;
     char uid[30];
     char scr[1024];
@@ -87,6 +87,10 @@ int main(int argc,char *argv[],char *envp[])
     }
     *sant=NULL;
 
+    if (argc<2){
+       fprintf(stderr,"Usage: %s <run|login|pull>\n");
+       return 1;
+    }
     command[0] = 0;
     for (i=1;i<argc;i++){
        int len=strlen(argv[i]);
@@ -97,8 +101,8 @@ int main(int argc,char *argv[],char *envp[])
        strcat(command," ");
        tot+=(len+1);
     }
+    start=1;
     setlogmask (LOG_UPTO (LOG_NOTICE));
-     
     openlog ("docker", LOG_CONS | LOG_PID | LOG_NDELAY, LOG_DAEMON);
     if (strcmp(argv[1],"login")==0){
       ret=execve(DOCK,login,envp);
@@ -111,10 +115,13 @@ int main(int argc,char *argv[],char *envp[])
       perror("Failed exec");
       return -1;
     }
+    else if (strcmp(argv[1],"run")==0){
+      start=2;
+    }
      
 
     /* Before we get started, let's make sure the user isn't trying anything sneaky. */
-    for (i=1;i<argc;i++){
+    for (i=start;i<argc;i++){
       if (argv[i][0]=='-'){
         if ((strlen(argv[i])!=2) || (argv[i][1]!='i' && argv[i][1]!='t')) {
           syslog (LOG_WARNING, "Bad argument (uid=%d):%s", getuid(),command);
@@ -165,7 +172,7 @@ int main(int argc,char *argv[],char *envp[])
     newargv[17]=name;
     newargv[18]="-e";
     newargv[19]="HOME";
-    memcpy(&newargv[20], &argv[1], sizeof(char *) * (argc));
+    memcpy(&newargv[20], &argv[start], sizeof(char *) * (argc));
     //printf("%d %d\n",getuid(),geteuid());
     /*for (i=0;i<argc+4;i++){
      * printf("%d %s\n",i,newargv[i]);

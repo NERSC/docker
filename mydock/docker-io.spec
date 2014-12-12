@@ -310,7 +310,8 @@ fi
 %{_mandir}/man1/docker*.1.gz
 %{_mandir}/man5/Dockerfile.5.gz
 %{_bindir}/docker
-%{_bindir}/mydock
+%attr(-,-,docker) %{_bindir}/mydock
+#%{_bindir}/mydock
 %dir %{_libexecdir}/docker
 %{_libexecdir}/docker/dockerinit
 %{_initddir}/docker

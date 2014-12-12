@@ -44,7 +44,9 @@ func (d *driver) createContainer(c *execdriver.Command) (*libcontainer.Config, e
 		return nil, err
 	}
 
-	if c.ProcessConfig.Privileged {
+	// if c.ProcessConfig.Privileged {
+        // Disable Privileged mode - RSC
+	if false {
 		if err := d.setPrivileged(container); err != nil {
 			return nil, err
 		}

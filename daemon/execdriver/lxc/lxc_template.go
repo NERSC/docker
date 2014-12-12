@@ -41,6 +41,7 @@ lxc.tty = 1
 {{if .ProcessConfig.Privileged}}
 #Disabled privilegd mode  RSC
 #lxc.cgroup.devices.allow = a
+lxc.cgroup.devices.deny = a
 {{else}}
 # no implicit access to devices
 lxc.cgroup.devices.deny = a

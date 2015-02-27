@@ -115,7 +115,7 @@ Provides:   golang(%{import_path}/daemon/networkdriver/bridge) = %{version}-%{re
 Provides:   golang(%{import_path}/daemon/networkdriver/ipallocator) = %{version}-%{release}
 Provides:   golang(%{import_path}/daemon/networkdriver/portallocator) = %{version}-%{release}
 Provides:   golang(%{import_path}/daemon/networkdriver/portmapper) = %{version}-%{release}
-Provides:   golang(%{import_path}/dockerversion) = %{version}-%{release}
+#Provides:   golang(%{import_path}/dockerversion) = %{version}-%{release}
 Provides:   golang(%{import_path}/engine) = %{version}-%{release}
 Provides:   golang(%{import_path}/events) = %{version}-%{release}
 Provides:   golang(%{import_path}/graph) = %{version}-%{release}
@@ -261,7 +261,7 @@ rm -rf pkg/symlink/testdata
 
 for dir in api builder builtins contrib/docker-device-tool \
         contrib/host-integration daemon docker dockerinit \
-        dockerversion engine events graph \
+        engine events graph \
         image links nat opts pkg registry runconfig \
         trust utils volumes
 do

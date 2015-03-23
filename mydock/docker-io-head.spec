@@ -33,7 +33,7 @@ Source2:        docker-storage.sysconfig
 # https://github.com/docker/docker/commit/640d2ef6f54d96ac4fc3f0f745cb1e6a35148607
 Source3:        docker.sysvinit
 #
-Patch0:		workarounds.diff
+#Patch0:		workarounds.diff
 BuildRequires:  glibc-static
 #BuildRequires:  golang >= 1.3.3
 # for gorilla/mux and kr/pty https://github.com/dotcloud/docker/pull/5950
@@ -185,7 +185,7 @@ The import paths of %{import_path}/pkg/...
 %prep
 #%setup -q -n docker-%{version}
 %setup -q -n docker
-%patch0 -p1
+#%patch0 -p1
 #rm -rf vendor
 #find . -name "*.go" \
 #        -print |\

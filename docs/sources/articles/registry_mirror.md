@@ -38,7 +38,7 @@ For example, if your mirror is serving on `http://10.0.0.2:5000`, you would run:
 **NOTE:**
 Depending on your local host setup, you may be able to add the
 `--registry-mirror` options to the `DOCKER_OPTS` variable in
-`/etc/defaults/docker`.
+`/etc/default/docker`.
 
 ### Step 2: Run the local registry mirror
 
@@ -50,7 +50,8 @@ port `5000` and mirrors the content at `registry-1.docker.io`:
     sudo docker run -p 5000:5000 \
         -e STANDALONE=false \
         -e MIRROR_SOURCE=https://registry-1.docker.io \
-        -e MIRROR_SOURCE_INDEX=https://index.docker.io registry
+        -e MIRROR_SOURCE_INDEX=https://index.docker.io \
+        registry
 
 ## Test it out
 

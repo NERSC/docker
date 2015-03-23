@@ -5,6 +5,7 @@ import (
 
 	"github.com/docker/docker/engine"
 	"github.com/docker/docker/image"
+	"github.com/docker/docker/utils"
 )
 
 func (s *TagStore) CmdHistory(job *engine.Job) engine.Status {
@@ -24,14 +25,14 @@ func (s *TagStore) CmdHistory(job *engine.Job) engine.Status {
 			if _, exists := lookupMap[id]; !exists {
 				lookupMap[id] = []string{}
 			}
-			lookupMap[id] = append(lookupMap[id], name+":"+tag)
+			lookupMap[id] = append(lookupMap[id], utils.ImageReference(name, tag))
 		}
 	}
 
 	outs := engine.NewTable("Created", 0)
 	err = foundImage.WalkHistory(func(img *image.Image) error {
 		out := &engine.Env{}
-		out.Set("Id", img.ID)
+		out.SetJson("Id", img.ID)
 		out.SetInt64("Created", img.Created.Unix())
 		out.Set("CreatedBy", strings.Join(img.ContainerConfig.Cmd, " "))
 		out.SetList("Tags", lookupMap[img.ID])

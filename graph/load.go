@@ -4,7 +4,6 @@ package graph
 
 import (
 	"encoding/json"
-	"io"
 	"io/ioutil"
 	"os"
 	"path"
@@ -27,23 +26,9 @@ func (s *TagStore) CmdLoad(job *engine.Job) engine.Status {
 	defer os.RemoveAll(tmpImageDir)
 
 	var (
-		repoTarFile = path.Join(tmpImageDir, "repo.tar")
-		repoDir     = path.Join(tmpImageDir, "repo")
+		repoDir = path.Join(tmpImageDir, "repo")
 	)
 
-	tarFile, err := os.Create(repoTarFile)
-	if err != nil {
-		return job.Error(err)
-	}
-	if _, err := io.Copy(tarFile, job.Stdin); err != nil {
-		return job.Error(err)
-	}
-	tarFile.Close()
-
-	repoFile, err := os.Open(repoTarFile)
-	if err != nil {
-		return job.Error(err)
-	}
 	if err := os.Mkdir(repoDir, os.ModeDir); err != nil {
 		return job.Error(err)
 	}
@@ -57,7 +42,7 @@ func (s *TagStore) CmdLoad(job *engine.Job) engine.Status {
 		excludes[i] = k
 		i++
 	}
-	if err := chrootarchive.Untar(repoFile, repoDir, &archive.TarOptions{Excludes: excludes}); err != nil {
+	if err := chrootarchive.Untar(job.Stdin, repoDir, &archive.TarOptions{ExcludePatterns: excludes}); err != nil {
 		return job.Error(err)
 	}
 
@@ -119,6 +104,20 @@ func (s *TagStore) recursiveLoad(eng *engine.Engine, address, tmpImageDir string
 			log.Debugf("Error validating ID: %s", err)
 			return err
 		}
+
+		// ensure no two downloads of the same layer happen at the same time
+		if c, err := s.poolAdd("pull", "layer:"+img.ID); err != nil {
+			if c != nil {
+				log.Debugf("Image (id: %s) load is already running, waiting: %v", img.ID, err)
+				<-c
+				return nil
+			}
+
+			return err
+		}
+
+		defer s.poolRemove("pull", "layer:"+img.ID)
+
 		if img.Parent != "" {
 			if !s.graph.Exists(img.Parent) {
 				if err := s.recursiveLoad(eng, img.Parent, tmpImageDir); err != nil {

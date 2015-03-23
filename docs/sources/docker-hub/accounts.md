@@ -37,13 +37,18 @@ page.
 Also available on the Docker Hub are organizations and groups that allow
 you to collaborate across your organization or team. You can see what
 organizations [you belong to and add new organizations](
-https://hub.docker.com/account/organizations/) from the Account
-tab.
+https://hub.docker.com/account/organizations/) from the Account Settings
+tab. They are also listed below your user name on your repositories page and in your account profile.
 
-![organizations](/docker-hub/orgs.png)
+![organizations](/docker-hub/hub-images/orgs.png)
 
 From within your organizations you can create groups that allow you to
 further manage who can interact with your repositories.
 
-![groups](/docker-hub/groups.png)
+![groups](/docker-hub/hub-images/groups.png)
+
+You can add or invite users to join groups by clicking on the organization and then clicking the edit button for the group to which you want to add members. Enter a user-name (for current Hub users) or email address (if they are not yet Hub users) for the person you want to invite. They will receive an email invitation to join the group.
+
+![invite members](/docker-hub/hub-images/invite.png)
+
 

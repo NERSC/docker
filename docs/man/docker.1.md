@@ -23,35 +23,47 @@ its own man page which explain usage and arguments.
 To see the man page for a command run **man docker <command>**.
 
 # OPTIONS
-**-D**=*true*|*false*
-   Enable debug mode. Default is false.
+**-h**, **--help**
+  Print usage statement
 
-**-H**, **--host**=[unix:///var/run/docker.sock]: tcp://[host:port] to bind or
-unix://[/path/to/socket] to use.
-   The socket(s) to bind to in daemon mode specified using one or more
-   tcp://host:port, unix:///path/to/socket, fd://* or fd://socketfd.
+**--api-cors-header**=""
+  Set CORS headers in the remote API. Default is cors disabled. Give urls like "http://foo, http://bar, ...". Give "*" to allow all.
 
-**--api-enable-cors**=*true*|*false*
-  Enable CORS headers in the remote API. Default is false.
-
-**-b**=""
+**-b**, **--bridge**=""
   Attach containers to a pre\-existing network bridge; use 'none' to disable container networking
 
 **--bip**=""
   Use the provided CIDR notation address for the dynamically created bridge (docker0); Mutually exclusive of \-b
 
-**-d**=*true*|*false*
+**-D**, **--debug**=*true*|*false*
+  Enable debug mode. Default is false.
+
+**-d**, **--daemon**=*true*|*false*
   Enable daemon mode. Default is false.
 
 **--dns**=""
   Force Docker to use specific DNS servers
 
-**-g**=""
-  Path to use as the root of the Docker runtime. Default is `/var/lib/docker`.
-
+**-e**, **--exec-driver**=""
+  Force Docker to use specific exec driver. Default is `native`.
 
 **--fixed-cidr**=""
-  IPv4 subnet for fixed IPs (ex: 10.20.0.0/16); this subnet must be nested in the bridge subnet (which is defined by \-b or \-\-bip)
+  IPv4 subnet for fixed IPs (e.g., 10.20.0.0/16); this subnet must be nested in the bridge subnet (which is defined by \-b or \-\-bip)
+
+**--fixed-cidr-v6**=""
+  IPv6 subnet for global IPv6 addresses (e.g., 2a00:1450::/64)
+
+**-G**, **--group**=""
+  Group to assign the unix socket specified by -H when running in daemon mode.
+  use '' (the empty string) to disable setting of a group. Default is `docker`.
+
+**-g**, **--graph**=""
+  Path to use as the root of the Docker runtime. Default is `/var/lib/docker`.
+
+**-H**, **--host**=[unix:///var/run/docker.sock]: tcp://[host:port] to bind or
+unix://[/path/to/socket] to use.
+  The socket(s) to bind to in daemon mode specified using one or more
+  tcp://host:port, unix:///path/to/socket, fd://* or fd://socketfd.
 
 **--icc**=*true*|*false*
   Allow unrestricted inter\-container and Docker daemon host communication. If disabled, containers can still be linked together using **--link** option (see **docker-run(1)**). Default is true.
@@ -59,34 +71,51 @@ unix://[/path/to/socket] to use.
 **--ip**=""
   Default IP address to use when binding container ports. Default is `0.0.0.0`.
 
+**--ip-forward**=*true*|*false*
+  Docker will enable IP forwarding. Default is true. If `--fixed-cidr-v6` is set. IPv6 forwarding will be activated, too. This may reject Router Advertisements and interfere with the host's existing IPv6 configuration. For more information please consult the documentation about "Advanced Networking - IPv6".
+
 **--ip-masq**=*true*|*false*
   Enable IP masquerading for bridge's IP range. Default is true.
 
 **--iptables**=*true*|*false*
-  Disable Docker's addition of iptables rules. Default is true.
+  Enable Docker's addition of iptables rules. Default is true.
 
-**-l**, **--log-level**="*debug*|*info*|*error*|*fatal*""
+**--ipv6**=*true*|*false*
+  Enable IPv6 support. Default is false. Docker will create an IPv6-enabled bridge with address fe80::1 which will allow you to create IPv6-enabled containers. Use together with `--fixed-cidr-v6` to provide globally routable IPv6 addresses. IPv6 forwarding will be enabled if not used with `--ip-forward=false`. This may collide with your host's current IPv6 settings. For more information please consult the documentation about "Advanced Networking - IPv6".
+
+**-l**, **--log-level**="*debug*|*info*|*warn*|*error*|*fatal*""
   Set the logging level. Default is `info`.
 
 **--label**="[]"
   Set key=value labels to the daemon (displayed in `docker info`)
 
-**--mtu**=VALUE
-  Set the containers network mtu. Default is `1500`.
+**--log-driver**="*json-file*|*none*"
+  Container's logging driver. Default is `default`.
+  **Warning**: `docker logs` command works only for `json-file` logging driver.
 
-**-p**=""
+**--mtu**=VALUE
+  Set the containers network mtu. Default is `0`.
+
+**-p**, **--pidfile**=""
   Path to use for daemon PID file. Default is `/var/run/docker.pid`
 
 **--registry-mirror**=<scheme>://<host>
   Prepend a registry mirror to be used for image pulls. May be specified multiple times.
 
-**-s**=""
+**-s**, **--storage-driver**=""
   Force the Docker runtime to use a specific storage driver.
 
 **--storage-opt**=[]
   Set storage driver options. See STORAGE DRIVER OPTIONS.
 
-**-v**=*true*|*false*
+**-tls**=*true*|*false*
+  Use TLS; implied by --tlsverify. Default is false.
+
+**-tlsverify**=*true*|*false*
+  Use TLS and verify the remote (daemon: verify client, client: verify daemon).
+  Default is false.
+
+**-v**, **--version**=*true*|*false*
   Print version information and quit. Default is false.
 
 **--selinux-enabled**=*true*|*false*
@@ -103,7 +132,7 @@ unix://[/path/to/socket] to use.
   Create a new image from a container's changes
 
 **docker-cp(1)**
-  Copy files/folders from a container's filesystem to the host at path
+  Copy files/folders from a container's filesystem to the host
 
 **docker-create(1)**
   Create a new container
@@ -133,7 +162,7 @@ unix://[/path/to/socket] to use.
   Display system-wide information
 
 **docker-inspect(1)**
-  Return low-level information on a container
+  Return low-level information on a container or image
 
 **docker-kill(1)**
   Kill a running container (which includes the wrapper process and everything
@@ -186,6 +215,9 @@ inside it)
 
 **docker-start(1)**
   Start a stopped container
+
+**docker-stats(1)**
+  Display a live stream of one or more containers' resource usage statistics
 
 **docker-stop(1)**
   Stop a running container
@@ -266,7 +298,7 @@ is 64K.
 #### dm.blkdiscard
 Enables or disables the use of blkdiscard when removing devicemapper devices.
 This is enabled by default (only) if using loopback devices and is required to
-res-parsify the loopback file on image/container removal.
+resparsify the loopback file on image/container removal.
 
 Disabling this on loopback can lead to *much* faster container removal times,
 but will prevent the space used in `/var/lib/docker` directory from being returned to
@@ -285,7 +317,7 @@ for data and metadata:
 For specific client examples please see the man page for the specific Docker
 command. For example:
 
-    man docker run
+    man docker-run
 
 # HISTORY
 April 2014, Originally compiled by William Henry (whenry at redhat dot com) based on docker.com source material and internal work.

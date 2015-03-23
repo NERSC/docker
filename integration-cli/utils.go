@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path"
 	"reflect"
 	"strings"
 	"syscall"
@@ -63,27 +65,49 @@ func runCommandWithStdoutStderr(cmd *exec.Cmd) (stdout string, stderr string, ex
 	return
 }
 
+func runCommandWithOutputForDuration(cmd *exec.Cmd, duration time.Duration) (output string, exitCode int, timedOut bool, err error) {
+	var outputBuffer bytes.Buffer
+	if cmd.Stdout != nil {
+		err = errors.New("cmd.Stdout already set")
+		return
+	}
+	cmd.Stdout = &outputBuffer
+
+	if cmd.Stderr != nil {
+		err = errors.New("cmd.Stderr already set")
+		return
+	}
+	cmd.Stderr = &outputBuffer
+
+	done := make(chan error)
+	go func() {
+		exitErr := cmd.Run()
+		exitCode = processExitCode(exitErr)
+		done <- exitErr
+	}()
+
+	select {
+	case <-time.After(duration):
+		killErr := cmd.Process.Kill()
+		if killErr != nil {
+			fmt.Printf("failed to kill (pid=%d): %v\n", cmd.Process.Pid, killErr)
+		}
+		timedOut = true
+		break
+	case err = <-done:
+		break
+	}
+	output = outputBuffer.String()
+	return
+}
+
 var ErrCmdTimeout = fmt.Errorf("command timed out")
 
 func runCommandWithOutputAndTimeout(cmd *exec.Cmd, timeout time.Duration) (output string, exitCode int, err error) {
-	done := make(chan error)
-	go func() {
-		output, exitCode, err = runCommandWithOutput(cmd)
-		if err != nil || exitCode != 0 {
-			done <- fmt.Errorf("failed to run command: %s", err)
-			return
-		}
-		done <- nil
-	}()
-	select {
-	case <-time.After(timeout):
-		killFailed := cmd.Process.Kill()
-		if killFailed == nil {
-			fmt.Printf("failed to kill (pid=%d): %v\n", cmd.Process.Pid, err)
-		}
+	var timedOut bool
+	output, exitCode, timedOut, err = runCommandWithOutputForDuration(cmd, timeout)
+	if timedOut {
 		err = ErrCmdTimeout
-	case <-done:
-		break
 	}
 	return
 }
@@ -95,14 +119,46 @@ func runCommand(cmd *exec.Cmd) (exitCode int, err error) {
 	return
 }
 
+func runCommandPipelineWithOutput(cmds ...*exec.Cmd) (output string, exitCode int, err error) {
+	if len(cmds) < 2 {
+		return "", 0, errors.New("pipeline does not have multiple cmds")
+	}
+
+	// connect stdin of each cmd to stdout pipe of previous cmd
+	for i, cmd := range cmds {
+		if i > 0 {
+			prevCmd := cmds[i-1]
+			cmd.Stdin, err = prevCmd.StdoutPipe()
+			if err != nil {
+				return "", 0, fmt.Errorf("cannot set stdout pipe for %s: %v", cmd.Path, err)
+			}
+		}
+	}
+
+	// start all cmds except the last
+	for _, cmd := range cmds[:len(cmds)-1] {
+		if err = cmd.Start(); err != nil {
+			return "", 0, fmt.Errorf("starting %s failed with error: %v", cmd.Path, err)
+		}
+	}
+
+	defer func() {
+		// wait all cmds except the last to release their resources
+		for _, cmd := range cmds[:len(cmds)-1] {
+			cmd.Wait()
+		}
+	}()
+
+	// wait on last cmd
+	return runCommandWithOutput(cmds[len(cmds)-1])
+}
+
 func logDone(message string) {
 	fmt.Printf("[PASSED]: %s\n", message)
 }
 
 func stripTrailingCharacters(target string) string {
-	target = strings.Trim(target, "\n")
-	target = strings.Trim(target, " ")
-	return target
+	return strings.TrimSpace(target)
 }
 
 func unmarshalJSON(data []byte, result interface{}) error {
@@ -137,28 +193,32 @@ func waitForContainer(contID string, args ...string) error {
 }
 
 func waitRun(contID string) error {
-	after := time.After(5 * time.Second)
+	return waitInspect(contID, "{{.State.Running}}", "true", 5)
+}
+
+func waitInspect(name, expr, expected string, timeout int) error {
+	after := time.After(time.Duration(timeout) * time.Second)
 
 	for {
-		cmd := exec.Command(dockerBinary, "inspect", "-f", "{{.State.Running}}", contID)
+		cmd := exec.Command(dockerBinary, "inspect", "-f", expr, name)
 		out, _, err := runCommandWithOutput(cmd)
 		if err != nil {
 			return fmt.Errorf("error executing docker inspect: %v", err)
 		}
 
-		if strings.Contains(out, "true") {
+		out = strings.TrimSpace(out)
+		if out == expected {
 			break
 		}
 
 		select {
 		case <-after:
-			return fmt.Errorf("container did not come up in time")
+			return fmt.Errorf("condition \"%q == %q\" not true in time", out, expected)
 		default:
 		}
 
 		time.Sleep(100 * time.Millisecond)
 	}
-
 	return nil
 }
 
@@ -233,10 +293,17 @@ func makeRandomString(n int) string {
 	// make a really long string
 	letters := []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 	b := make([]byte, n)
+	r := rand.New(rand.NewSource(time.Now().UTC().UnixNano()))
 	for i := range b {
-		b[i] = letters[rand.Intn(len(letters))]
+		b[i] = letters[r.Intn(len(letters))]
 	}
 	return string(b)
+}
+
+// randomUnixTmpDirPath provides a temporary unix path with rand string appended.
+// does not create or checks if it exists.
+func randomUnixTmpDirPath(s string) string {
+	return path.Join("/tmp", fmt.Sprintf("%s.%s", s, makeRandomString(10)))
 }
 
 // Reads chunkSize bytes from reader after every interval.
@@ -260,4 +327,18 @@ func consumeWithSpeed(reader io.Reader, chunkSize int, interval time.Duration, s
 			time.Sleep(interval)
 		}
 	}
+}
+
+// Parses 'procCgroupData', which is output of '/proc/<pid>/cgroup', and returns
+// a map which cgroup name as key and path as value.
+func parseCgroupPaths(procCgroupData string) map[string]string {
+	cgroupPaths := map[string]string{}
+	for _, line := range strings.Split(procCgroupData, "\n") {
+		parts := strings.Split(line, ":")
+		if len(parts) != 3 {
+			continue
+		}
+		cgroupPaths[parts[1]] = parts[2]
+	}
+	return cgroupPaths
 }

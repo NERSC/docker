@@ -54,7 +54,7 @@ func TestTagInvalidUnprefixedRepo(t *testing.T) {
 			t.Fatalf("tag busybox %v should have failed", repo)
 		}
 	}
-	logDone("tag - busybox invalid repo names --> must fail")
+	logDone("tag - busybox invalid repo names --> must not work")
 }
 
 // ensure we don't allow the use of invalid tags; these tag operations should fail
@@ -70,7 +70,7 @@ func TestTagInvalidPrefixedRepo(t *testing.T) {
 			t.Fatalf("tag busybox %v should have failed", repotag)
 		}
 	}
-	logDone("tag - busybox with invalid repo:tagnames --> must fail")
+	logDone("tag - busybox with invalid repo:tagnames --> must not work")
 }
 
 // ensure we allow the use of valid tags
@@ -111,7 +111,7 @@ func TestTagExistedNameWithoutForce(t *testing.T) {
 	}
 	deleteImages("busybox:test")
 
-	logDone("tag - busybox with an existed tag name without -f option --> must fail")
+	logDone("tag - busybox with an existed tag name without -f option --> must not work")
 }
 
 // tag an image with an existed tag name with -f option should work
@@ -131,4 +131,50 @@ func TestTagExistedNameWithForce(t *testing.T) {
 	deleteImages("busybox:test")
 
 	logDone("tag - busybox with an existed tag name with -f option work")
+}
+
+// ensure tagging using official names works
+// ensure all tags result in the same name
+func TestTagOfficialNames(t *testing.T) {
+	names := []string{
+		"docker.io/busybox",
+		"index.docker.io/busybox",
+		"library/busybox",
+		"docker.io/library/busybox",
+		"index.docker.io/library/busybox",
+	}
+
+	for _, name := range names {
+		tagCmd := exec.Command(dockerBinary, "tag", "-f", "busybox:latest", name+":latest")
+		out, exitCode, err := runCommandWithOutput(tagCmd)
+		if err != nil || exitCode != 0 {
+			t.Errorf("tag busybox %v should have worked: %s, %s", name, err, out)
+			continue
+		}
+
+		// ensure we don't have multiple tag names.
+		imagesCmd := exec.Command(dockerBinary, "images")
+		out, _, err = runCommandWithOutput(imagesCmd)
+		if err != nil {
+			t.Errorf("listing images failed with errors: %v, %s", err, out)
+		} else if strings.Contains(out, name) {
+			t.Errorf("images should not have listed '%s'", name)
+			deleteImages(name + ":latest")
+		} else {
+			logMessage := fmt.Sprintf("tag official name - busybox %v", name)
+			logDone(logMessage)
+		}
+	}
+
+	for _, name := range names {
+		tagCmd := exec.Command(dockerBinary, "tag", "-f", name+":latest", "fooo/bar:latest")
+		_, exitCode, err := runCommandWithOutput(tagCmd)
+		if err != nil || exitCode != 0 {
+			t.Errorf("tag %v fooo/bar should have worked: %s", name, err)
+			continue
+		}
+		deleteImages("fooo/bar:latest")
+		logMessage := fmt.Sprintf("tag official name - %v fooo/bar", name)
+		logDone(logMessage)
+	}
 }

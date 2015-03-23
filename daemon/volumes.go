@@ -8,14 +8,13 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/docker/docker/daemon/execdriver"
 	"github.com/docker/docker/pkg/chrootarchive"
 	"github.com/docker/docker/pkg/symlink"
+	"github.com/docker/docker/pkg/system"
 	"github.com/docker/docker/volumes"
-	"github.com/docker/libcontainer/label"
 )
 
 type Mount struct {
@@ -24,6 +23,7 @@ type Mount struct {
 	volume      *volumes.Volume
 	Writable    bool
 	copyData    bool
+	from        *Container
 }
 
 func (mnt *Mount) Export(resource string) (io.ReadCloser, error) {
@@ -42,9 +42,6 @@ func (container *Container) prepareVolumes() error {
 	if container.Volumes == nil || len(container.Volumes) == 0 {
 		container.Volumes = make(map[string]string)
 		container.VolumesRW = make(map[string]bool)
-		if err := container.applyVolumesFrom(); err != nil {
-			return err
-		}
 	}
 
 	return container.createVolumes()
@@ -73,13 +70,28 @@ func (container *Container) createVolumes() error {
 		}
 	}
 
-	return nil
+	// On every start, this will apply any new `VolumesFrom` entries passed in via HostConfig, which may override volumes set in `create`
+	return container.applyVolumesFrom()
 }
 
 func (m *Mount) initialize() error {
 	// No need to initialize anything since it's already been initialized
-	if _, exists := m.container.Volumes[m.MountToPath]; exists {
-		return nil
+	if hostPath, exists := m.container.Volumes[m.MountToPath]; exists {
+		// If this is a bind-mount/volumes-from, maybe it was passed in at start instead of create
+		// We need to make sure bind-mounts/volumes-from passed on start can override existing ones.
+		if !m.volume.IsBindMount && m.from == nil {
+			return nil
+		}
+		if m.volume.Path == hostPath {
+			return nil
+		}
+
+		// Make sure we remove these old volumes we don't actually want now.
+		// Ignore any errors here since this is just cleanup, maybe someone volumes-from'd this volume
+		if v := m.container.daemon.volumes.Get(hostPath); v != nil {
+			v.RemoveContainer(m.container.ID)
+			m.container.daemon.volumes.Delete(v.Path)
+		}
 	}
 
 	// This is the full path to container fs + mntToPath
@@ -107,8 +119,23 @@ func (container *Container) VolumePaths() map[string]struct{} {
 }
 
 func (container *Container) registerVolumes() {
-	for _, mnt := range container.VolumeMounts() {
-		mnt.volume.AddContainer(container.ID)
+	for path := range container.VolumePaths() {
+		if v := container.daemon.volumes.Get(path); v != nil {
+			v.AddContainer(container.ID)
+			continue
+		}
+
+		// if container was created with an old daemon, this volume may not be registered so we need to make sure it gets registered
+		writable := true
+		if rw, exists := container.VolumesRW[path]; exists {
+			writable = rw
+		}
+		v, err := container.daemon.volumes.FindOrCreateVolume(path, writable)
+		if err != nil {
+			log.Debugf("error registering volume %s: %v", path, err)
+			continue
+		}
+		v.AddContainer(container.ID)
 	}
 }
 
@@ -130,6 +157,10 @@ func (container *Container) parseVolumeMountConfig() (map[string]*Mount, error) 
 		path, mountToPath, writable, err := parseBindMountSpec(spec)
 		if err != nil {
 			return nil, err
+		}
+		// Check if a bind mount has already been specified for the same container path
+		if m, exists := mounts[mountToPath]; exists {
+			return nil, fmt.Errorf("Duplicate volume %q: %q already in use, mounted from %q", path, mountToPath, m.volume.Path)
 		}
 		// Check if a volume already exists for this and use it
 		vol, err := container.daemon.volumes.FindOrCreateVolume(path, writable)
@@ -155,6 +186,12 @@ func (container *Container) parseVolumeMountConfig() (map[string]*Mount, error) 
 		// Check if this has already been created
 		if _, exists := container.Volumes[path]; exists {
 			continue
+		}
+
+		if stat, err := os.Stat(filepath.Join(container.basefs, path)); err == nil {
+			if !stat.IsDir() {
+				return nil, fmt.Errorf("file exists at %s, can't create volume there")
+			}
 		}
 
 		vol, err := container.daemon.volumes.FindOrCreateVolume("", true)
@@ -202,26 +239,69 @@ func parseBindMountSpec(spec string) (string, string, bool, error) {
 	return path, mountToPath, writable, nil
 }
 
+func parseVolumesFromSpec(spec string) (string, string, error) {
+	specParts := strings.SplitN(spec, ":", 2)
+	if len(specParts) == 0 {
+		return "", "", fmt.Errorf("malformed volumes-from specification: %s", spec)
+	}
+
+	var (
+		id   = specParts[0]
+		mode = "rw"
+	)
+	if len(specParts) == 2 {
+		mode = specParts[1]
+		if !validMountMode(mode) {
+			return "", "", fmt.Errorf("invalid mode for volumes-from: %s", mode)
+		}
+	}
+	return id, mode, nil
+}
+
 func (container *Container) applyVolumesFrom() error {
 	volumesFrom := container.hostConfig.VolumesFrom
+	if len(volumesFrom) > 0 && container.AppliedVolumesFrom == nil {
+		container.AppliedVolumesFrom = make(map[string]struct{})
+	}
 
-	mountGroups := make([]map[string]*Mount, 0, len(volumesFrom))
+	mountGroups := make(map[string][]*Mount)
 
 	for _, spec := range volumesFrom {
-		mountGroup, err := parseVolumesFromSpec(container.daemon, spec)
+		id, mode, err := parseVolumesFromSpec(spec)
 		if err != nil {
 			return err
 		}
-		mountGroups = append(mountGroups, mountGroup)
+		if _, exists := container.AppliedVolumesFrom[id]; exists {
+			// Don't try to apply these since they've already been applied
+			continue
+		}
+
+		c, err := container.daemon.Get(id)
+		if err != nil {
+			return fmt.Errorf("Could not apply volumes of non-existent container %q.", id)
+		}
+
+		var (
+			fromMounts = c.VolumeMounts()
+			mounts     []*Mount
+		)
+
+		for _, mnt := range fromMounts {
+			mnt.Writable = mnt.Writable && (mode == "rw")
+			mounts = append(mounts, mnt)
+		}
+		mountGroups[id] = mounts
 	}
 
-	for _, mounts := range mountGroups {
+	for id, mounts := range mountGroups {
 		for _, mnt := range mounts {
+			mnt.from = mnt.container
 			mnt.container = container
 			if err := mnt.initialize(); err != nil {
 				return err
 			}
 		}
+		container.AppliedVolumesFrom[id] = struct{}{}
 	}
 	return nil
 }
@@ -236,23 +316,7 @@ func validMountMode(mode string) bool {
 }
 
 func (container *Container) setupMounts() error {
-	mounts := []execdriver.Mount{
-		{Source: container.ResolvConfPath, Destination: "/etc/resolv.conf", Writable: true, Private: true},
-	}
-
-	if container.HostnamePath != "" {
-		mounts = append(mounts, execdriver.Mount{Source: container.HostnamePath, Destination: "/etc/hostname", Writable: true, Private: true})
-	}
-
-	if container.HostsPath != "" {
-		mounts = append(mounts, execdriver.Mount{Source: container.HostsPath, Destination: "/etc/hosts", Writable: true, Private: true})
-	}
-
-	for _, m := range mounts {
-		if err := label.SetFileLabel(m.Source, container.MountLabel); err != nil {
-			return err
-		}
-	}
+	mounts := []execdriver.Mount{}
 
 	// Mount user specified volumes
 	// Note, these are not private because you may want propagation of (un)mounts from host
@@ -267,38 +331,20 @@ func (container *Container) setupMounts() error {
 		})
 	}
 
+	if container.ResolvConfPath != "" {
+		mounts = append(mounts, execdriver.Mount{Source: container.ResolvConfPath, Destination: "/etc/resolv.conf", Writable: true, Private: true})
+	}
+
+	if container.HostnamePath != "" {
+		mounts = append(mounts, execdriver.Mount{Source: container.HostnamePath, Destination: "/etc/hostname", Writable: true, Private: true})
+	}
+
+	if container.HostsPath != "" {
+		mounts = append(mounts, execdriver.Mount{Source: container.HostsPath, Destination: "/etc/hosts", Writable: true, Private: true})
+	}
+
 	container.command.Mounts = mounts
 	return nil
-}
-
-func parseVolumesFromSpec(daemon *Daemon, spec string) (map[string]*Mount, error) {
-	specParts := strings.SplitN(spec, ":", 2)
-	if len(specParts) == 0 {
-		return nil, fmt.Errorf("Malformed volumes-from specification: %s", spec)
-	}
-
-	c := daemon.Get(specParts[0])
-	if c == nil {
-		return nil, fmt.Errorf("Container %s not found. Impossible to mount its volumes", specParts[0])
-	}
-
-	mounts := c.VolumeMounts()
-
-	if len(specParts) == 2 {
-		mode := specParts[1]
-		if !validMountMode(mode) {
-			return nil, fmt.Errorf("Invalid mode for volumes-from: %s", mode)
-		}
-
-		// Set the mode for the inheritted volume
-		for _, mnt := range mounts {
-			// Ensure that if the inherited volume is not writable, that we don't make
-			// it writable here
-			mnt.Writable = mnt.Writable && (mode == "rw")
-		}
-	}
-
-	return mounts, nil
 }
 
 func (container *Container) VolumeMounts() map[string]*Mount {
@@ -339,15 +385,14 @@ func copyExistingContents(source, destination string) error {
 // copyOwnership copies the permissions and uid:gid of the source file
 // into the destination file
 func copyOwnership(source, destination string) error {
-	var stat syscall.Stat_t
-
-	if err := syscall.Stat(source, &stat); err != nil {
+	stat, err := system.Stat(source)
+	if err != nil {
 		return err
 	}
 
-	if err := os.Chown(destination, int(stat.Uid), int(stat.Gid)); err != nil {
+	if err := os.Chown(destination, int(stat.Uid()), int(stat.Gid())); err != nil {
 		return err
 	}
 
-	return os.Chmod(destination, os.FileMode(stat.Mode))
+	return os.Chmod(destination, os.FileMode(stat.Mode()))
 }

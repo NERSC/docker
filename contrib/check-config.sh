@@ -10,7 +10,12 @@ possibleConfigs=(
 	"/usr/src/linux-$(uname -r)/.config"
 	'/usr/src/linux/.config'
 )
-: ${CONFIG:="${possibleConfigs[0]}"}
+
+if [ $# -gt 0 ]; then
+	CONFIG="$1"
+else
+	: ${CONFIG:="${possibleConfigs[0]}"}
+fi
 
 if ! command -v zgrep &> /dev/null; then
 	zgrep() {
@@ -89,7 +94,7 @@ if [ ! -e "$CONFIG" ]; then
 	if [ ! -e "$CONFIG" ]; then
 		wrap_warning "error: cannot find kernel config"
 		wrap_warning "  try running this script again, specifying the kernel config:"
-		wrap_warning "    CONFIG=/path/to/kernel/.config $0"
+		wrap_warning "    CONFIG=/path/to/kernel/.config $0 or $0 /path/to/kernel/.config"
 		exit 1
 	fi
 fi
@@ -133,11 +138,14 @@ fi
 flags=(
 	NAMESPACES {NET,PID,IPC,UTS}_NS
 	DEVPTS_MULTIPLE_INSTANCES
-	CGROUPS CGROUP_CPUACCT CGROUP_DEVICE CGROUP_FREEZER CGROUP_SCHED
+	CGROUPS CGROUP_CPUACCT CGROUP_DEVICE CGROUP_FREEZER CGROUP_SCHED CPUSETS
 	MACVLAN VETH BRIDGE
 	NF_NAT_IPV4 IP_NF_FILTER IP_NF_TARGET_MASQUERADE
 	NETFILTER_XT_MATCH_{ADDRTYPE,CONNTRACK}
 	NF_NAT NF_NAT_NEEDED
+
+	# required for bind-mounting /dev/mqueue into containers
+	POSIX_MQUEUE
 )
 check_flags "${flags[@]}"
 echo
@@ -166,7 +174,7 @@ echo '- Storage Drivers:'
 	check_flags BLK_DEV_DM DM_THIN_PROVISIONING EXT4_FS EXT4_FS_POSIX_ACL EXT4_FS_SECURITY | sed 's/^/  /'
 
 	echo '- "'$(wrap_color 'overlay' blue)'":'
-	check_flags OVERLAY_FS | sed 's/^/  /'
+	check_flags OVERLAY_FS EXT4_FS_SECURITY EXT4_FS_POSIX_ACL | sed 's/^/  /'
 } | sed 's/^/  /'
 echo
 

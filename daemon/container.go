@@ -14,22 +14,29 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/docker/libcontainer"
+	"github.com/docker/libcontainer/configs"
 	"github.com/docker/libcontainer/devices"
 	"github.com/docker/libcontainer/label"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/docker/docker/daemon/execdriver"
+	"github.com/docker/docker/daemon/logger"
+	"github.com/docker/docker/daemon/logger/jsonfilelog"
 	"github.com/docker/docker/engine"
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/links"
 	"github.com/docker/docker/nat"
 	"github.com/docker/docker/pkg/archive"
 	"github.com/docker/docker/pkg/broadcastwriter"
+	"github.com/docker/docker/pkg/common"
+	"github.com/docker/docker/pkg/directory"
 	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/networkfs/etchosts"
 	"github.com/docker/docker/pkg/networkfs/resolvconf"
 	"github.com/docker/docker/pkg/promise"
 	"github.com/docker/docker/pkg/symlink"
+	"github.com/docker/docker/pkg/ulimit"
 	"github.com/docker/docker/runconfig"
 	"github.com/docker/docker/utils"
 )
@@ -62,14 +69,15 @@ type Container struct {
 	Path string
 	Args []string
 
-	Config *runconfig.Config
-	Image  string
+	Config  *runconfig.Config
+	ImageID string `json:"Image"`
 
 	NetworkSettings *NetworkSettings
 
 	ResolvConfPath string
 	HostnamePath   string
 	HostsPath      string
+	LogPath        string
 	Name           string
 	Driver         string
 	ExecDriver     string
@@ -81,6 +89,7 @@ type Container struct {
 	MountLabel, ProcessLabel string
 	AppArmorProfile          string
 	RestartCount             int
+	UpdateDns                bool
 
 	// Maps container paths to volume paths.  The key in this is the path to which
 	// the volume is being mounted inside the container.  Value is the path of the
@@ -94,6 +103,10 @@ type Container struct {
 	activeLinks  map[string]*links.Link
 	monitor      *containerMonitor
 	execCommands *execStore
+	// logDriver for closing
+	logDriver          logger.Logger
+	logCopier          *logger.Copier
+	AppliedVolumesFrom map[string]struct{}
 }
 
 func (container *Container) FromDisk() error {
@@ -186,7 +199,7 @@ func (container *Container) WriteHostConfig() error {
 
 func (container *Container) LogEvent(action string) {
 	d := container.daemon
-	if err := d.eng.Job("log", action, container.ID, d.Repositories().ImageName(container.Image)).Run(); err != nil {
+	if err := d.eng.Job("log", action, container.ID, d.Repositories().ImageName(container.ImageID)).Run(); err != nil {
 		log.Errorf("Error logging event %s for %s: %s", action, container.ID, err)
 	}
 }
@@ -216,11 +229,15 @@ func populateCommand(c *Container, env []string) error {
 		if !c.Config.NetworkDisabled {
 			network := c.NetworkSettings
 			en.Interface = &execdriver.NetworkInterface{
-				Gateway:     network.Gateway,
-				Bridge:      network.Bridge,
-				IPAddress:   network.IPAddress,
-				IPPrefixLen: network.IPPrefixLen,
-				MacAddress:  network.MacAddress,
+				Gateway:              network.Gateway,
+				Bridge:               network.Bridge,
+				IPAddress:            network.IPAddress,
+				IPPrefixLen:          network.IPPrefixLen,
+				MacAddress:           network.MacAddress,
+				LinkLocalIPv6Address: network.LinkLocalIPv6Address,
+				GlobalIPv6Address:    network.GlobalIPv6Address,
+				GlobalIPv6PrefixLen:  network.GlobalIPv6PrefixLen,
+				IPv6Gateway:          network.IPv6Gateway,
 			}
 		}
 	case "container":
@@ -245,19 +262,22 @@ func populateCommand(c *Container, env []string) error {
 		ipc.HostIpc = c.hostConfig.IpcMode.IsHost()
 	}
 
+	pid := &execdriver.Pid{}
+	pid.HostPid = c.hostConfig.PidMode.IsHost()
+
 	// Build lists of devices allowed and created within the container.
-	userSpecifiedDevices := make([]*devices.Device, len(c.hostConfig.Devices))
+	userSpecifiedDevices := make([]*configs.Device, len(c.hostConfig.Devices))
 	for i, deviceMapping := range c.hostConfig.Devices {
-		device, err := devices.GetDevice(deviceMapping.PathOnHost, deviceMapping.CgroupPermissions)
+		device, err := devices.DeviceFromPath(deviceMapping.PathOnHost, deviceMapping.CgroupPermissions)
 		if err != nil {
 			return fmt.Errorf("error gathering device information while adding custom device %q: %s", deviceMapping.PathOnHost, err)
 		}
 		device.Path = deviceMapping.PathInContainer
 		userSpecifiedDevices[i] = device
 	}
-	allowedDevices := append(devices.DefaultAllowedDevices, userSpecifiedDevices...)
+	allowedDevices := append(configs.DefaultAllowedDevices, userSpecifiedDevices...)
 
-	autoCreatedDevices := append(devices.DefaultAutoCreatedDevices, userSpecifiedDevices...)
+	autoCreatedDevices := append(configs.DefaultAutoCreatedDevices, userSpecifiedDevices...)
 
 	// TODO: this can be removed after lxc-conf is fully deprecated
 	lxcConfig, err := mergeLxcConfIntoOptions(c.hostConfig)
@@ -265,11 +285,34 @@ func populateCommand(c *Container, env []string) error {
 		return err
 	}
 
+	var rlimits []*ulimit.Rlimit
+	ulimits := c.hostConfig.Ulimits
+
+	// Merge ulimits with daemon defaults
+	ulIdx := make(map[string]*ulimit.Ulimit)
+	for _, ul := range ulimits {
+		ulIdx[ul.Name] = ul
+	}
+	for name, ul := range c.daemon.config.Ulimits {
+		if _, exists := ulIdx[name]; !exists {
+			ulimits = append(ulimits, ul)
+		}
+	}
+
+	for _, limit := range ulimits {
+		rl, err := limit.GetRlimit()
+		if err != nil {
+			return err
+		}
+		rlimits = append(rlimits, rl)
+	}
+
 	resources := &execdriver.Resources{
-		Memory:     c.Config.Memory,
-		MemorySwap: c.Config.MemorySwap,
-		CpuShares:  c.Config.CpuShares,
-		Cpuset:     c.Config.Cpuset,
+		Memory:     c.hostConfig.Memory,
+		MemorySwap: c.hostConfig.MemorySwap,
+		CpuShares:  c.hostConfig.CpuShares,
+		CpusetCpus: c.hostConfig.CpusetCpus,
+		Rlimits:    rlimits,
 	}
 
 	processConfig := execdriver.ProcessConfig{
@@ -286,10 +329,12 @@ func populateCommand(c *Container, env []string) error {
 	c.command = &execdriver.Command{
 		ID:                 c.ID,
 		Rootfs:             c.RootfsPath(),
+		ReadonlyRootfs:     c.hostConfig.ReadonlyRootfs,
 		InitPath:           "/.dockerinit",
 		WorkingDir:         c.Config.WorkingDir,
 		Network:            en,
 		Ipc:                ipc,
+		Pid:                pid,
 		Resources:          resources,
 		AllowedDevices:     allowedDevices,
 		AutoCreatedDevices: autoCreatedDevices,
@@ -300,6 +345,7 @@ func populateCommand(c *Container, env []string) error {
 		MountLabel:         c.GetMountLabel(),
 		LxcConfig:          lxcConfig,
 		AppArmorProfile:    c.AppArmorProfile,
+		CgroupParent:       c.hostConfig.CgroupParent,
 	}
 
 	return nil
@@ -313,7 +359,7 @@ func (container *Container) Start() (err error) {
 		return nil
 	}
 
-	// if we encounter and error during start we need to ensure that any other
+	// if we encounter an error during start we need to ensure that any other
 	// setup has been cleaned up properly
 	defer func() {
 		if err != nil {
@@ -370,10 +416,7 @@ func (container *Container) Run() error {
 }
 
 func (container *Container) Output() (output []byte, err error) {
-	pipe, err := container.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
+	pipe := container.StdoutPipe()
 	defer pipe.Close()
 	if err := container.Start(); err != nil {
 		return nil, err
@@ -391,20 +434,20 @@ func (container *Container) Output() (output []byte, err error) {
 // copied and delivered to all StdoutPipe and StderrPipe consumers, using
 // a kind of "broadcaster".
 
-func (streamConfig *StreamConfig) StdinPipe() (io.WriteCloser, error) {
-	return streamConfig.stdinPipe, nil
+func (streamConfig *StreamConfig) StdinPipe() io.WriteCloser {
+	return streamConfig.stdinPipe
 }
 
-func (streamConfig *StreamConfig) StdoutPipe() (io.ReadCloser, error) {
+func (streamConfig *StreamConfig) StdoutPipe() io.ReadCloser {
 	reader, writer := io.Pipe()
 	streamConfig.stdout.AddWriter(writer, "")
-	return ioutils.NewBufReader(reader), nil
+	return ioutils.NewBufReader(reader)
 }
 
-func (streamConfig *StreamConfig) StderrPipe() (io.ReadCloser, error) {
+func (streamConfig *StreamConfig) StderrPipe() io.ReadCloser {
 	reader, writer := io.Pipe()
 	streamConfig.stderr.AddWriter(writer, "")
-	return ioutils.NewBufReader(reader), nil
+	return ioutils.NewBufReader(reader)
 }
 
 func (streamConfig *StreamConfig) StdoutLogPipe() io.ReadCloser {
@@ -449,11 +492,18 @@ func (container *Container) buildHostsFiles(IP string) error {
 
 	for linkAlias, child := range children {
 		_, alias := path.Split(linkAlias)
-		extraContent = append(extraContent, etchosts.Record{Hosts: alias, IP: child.NetworkSettings.IPAddress})
+		// allow access to the linked container via the alias, real name, and container hostname
+		aliasList := alias + " " + child.Config.Hostname
+		// only add the name if alias isn't equal to the name
+		if alias != child.Name[1:] {
+			aliasList = aliasList + " " + child.Name[1:]
+		}
+		extraContent = append(extraContent, etchosts.Record{Hosts: aliasList, IP: child.NetworkSettings.IPAddress})
 	}
 
 	for _, extraHost := range container.hostConfig.ExtraHosts {
-		parts := strings.Split(extraHost, ":")
+		// allow IPv6 addresses in extra hosts; only split on first ":"
+		parts := strings.SplitN(extraHost, ":", 2)
 		extraContent = append(extraContent, etchosts.Record{Hosts: parts[0], IP: parts[1]})
 	}
 
@@ -542,12 +592,17 @@ func (container *Container) AllocateNetwork() error {
 	container.NetworkSettings.IPPrefixLen = env.GetInt("IPPrefixLen")
 	container.NetworkSettings.MacAddress = env.Get("MacAddress")
 	container.NetworkSettings.Gateway = env.Get("Gateway")
+	container.NetworkSettings.LinkLocalIPv6Address = env.Get("LinkLocalIPv6")
+	container.NetworkSettings.LinkLocalIPv6PrefixLen = 64
+	container.NetworkSettings.GlobalIPv6Address = env.Get("GlobalIPv6")
+	container.NetworkSettings.GlobalIPv6PrefixLen = env.GetInt("GlobalIPv6PrefixLen")
+	container.NetworkSettings.IPv6Gateway = env.Get("IPv6Gateway")
 
 	return nil
 }
 
 func (container *Container) ReleaseNetwork() {
-	if container.Config.NetworkDisabled {
+	if container.Config.NetworkDisabled || !container.hostConfig.NetworkMode.IsPrivate() {
 		return
 	}
 	eng := container.daemon.eng
@@ -639,6 +694,16 @@ func (container *Container) KillSig(sig int) error {
 	return container.daemon.Kill(container, sig)
 }
 
+// Wrapper aroung KillSig() suppressing "no such process" error.
+func (container *Container) killPossiblyDeadProcess(sig int) error {
+	err := container.KillSig(sig)
+	if err == syscall.ESRCH {
+		log.Debugf("Cannot kill process (pid=%d) with signal %d: no such process.", container.GetPid(), sig)
+		return nil
+	}
+	return err
+}
+
 func (container *Container) Pause() error {
 	if container.IsPaused() {
 		return fmt.Errorf("Container %s is already paused", container.ID)
@@ -665,7 +730,7 @@ func (container *Container) Kill() error {
 	}
 
 	// 1. Send SIGKILL
-	if err := container.KillSig(9); err != nil {
+	if err := container.killPossiblyDeadProcess(9); err != nil {
 		return err
 	}
 
@@ -673,9 +738,12 @@ func (container *Container) Kill() error {
 	if _, err := container.WaitStop(10 * time.Second); err != nil {
 		// Ensure that we don't kill ourselves
 		if pid := container.GetPid(); pid != 0 {
-			log.Infof("Container %s failed to exit within 10 seconds of kill - trying direct SIGKILL", utils.TruncateID(container.ID))
+			log.Infof("Container %s failed to exit within 10 seconds of kill - trying direct SIGKILL", common.TruncateID(container.ID))
 			if err := syscall.Kill(pid, 9); err != nil {
-				return err
+				if err != syscall.ESRCH {
+					return err
+				}
+				log.Debugf("Cannot kill process (pid=%d) with signal 9: no such process.", pid)
 			}
 		}
 	}
@@ -690,9 +758,9 @@ func (container *Container) Stop(seconds int) error {
 	}
 
 	// 1. Send a SIGTERM
-	if err := container.KillSig(15); err != nil {
+	if err := container.killPossiblyDeadProcess(15); err != nil {
 		log.Infof("Failed to send SIGTERM to the process, force killing")
-		if err := container.KillSig(9); err != nil {
+		if err := container.killPossiblyDeadProcess(9); err != nil {
 			return err
 		}
 	}
@@ -786,7 +854,7 @@ func (container *Container) GetImage() (*image.Image, error) {
 	if container.daemon == nil {
 		return nil, fmt.Errorf("Can't get image of unregistered container")
 	}
-	return container.daemon.graph.Get(container.Image)
+	return container.daemon.graph.Get(container.ImageID)
 }
 
 func (container *Container) Unmount() error {
@@ -835,7 +903,7 @@ func (container *Container) GetSize() (int64, int64) {
 	)
 
 	if err := container.Mount(); err != nil {
-		log.Errorf("Warning: failed to compute size of container rootfs %s: %s", container.ID, err)
+		log.Errorf("Failed to compute size of container rootfs %s: %s", container.ID, err)
 		return sizeRw, sizeRootfs
 	}
 	defer container.Unmount()
@@ -843,14 +911,14 @@ func (container *Container) GetSize() (int64, int64) {
 	initID := fmt.Sprintf("%s-init", container.ID)
 	sizeRw, err = driver.DiffSize(container.ID, initID)
 	if err != nil {
-		log.Errorf("Warning: driver %s couldn't return diff size of container %s: %s", driver, container.ID, err)
+		log.Errorf("Driver %s couldn't return diff size of container %s: %s", driver, container.ID, err)
 		// FIXME: GetSize should return an error. Not changing it now in case
 		// there is a side-effect.
 		sizeRw = -1
 	}
 
 	if _, err = os.Stat(container.basefs); err != nil {
-		if sizeRootfs, err = utils.TreeSize(container.basefs); err != nil {
+		if sizeRootfs, err = directory.Size(container.basefs); err != nil {
 			sizeRootfs = -1
 		}
 	}
@@ -891,8 +959,8 @@ func (container *Container) Copy(resource string) (io.ReadCloser, error) {
 	}
 
 	archive, err := archive.TarWithOptions(basePath, &archive.TarOptions{
-		Compression: archive.Uncompressed,
-		Includes:    filter,
+		Compression:  archive.Uncompressed,
+		IncludeFiles: filter,
 	})
 	if err != nil {
 		container.Unmount()
@@ -912,7 +980,7 @@ func (container *Container) Exposes(p nat.Port) bool {
 	return exists
 }
 
-func (container *Container) GetPtyMaster() (*os.File, error) {
+func (container *Container) GetPtyMaster() (libcontainer.Console, error) {
 	ttyConsole, ok := container.command.ProcessConfig.Terminal.(execdriver.TtyTerminal)
 	if !ok {
 		return nil, ErrNoTTY
@@ -945,6 +1013,29 @@ func (container *Container) DisableLink(name string) {
 
 func (container *Container) setupContainerDns() error {
 	if container.ResolvConfPath != "" {
+		// check if this is an existing container that needs DNS update:
+		if container.UpdateDns {
+			// read the host's resolv.conf, get the hash and call updateResolvConf
+			log.Debugf("Check container (%s) for update to resolv.conf - UpdateDns flag was set", container.ID)
+			latestResolvConf, latestHash := resolvconf.GetLastModified()
+
+			// clean container resolv.conf re: localhost nameservers and IPv6 NS (if IPv6 disabled)
+			updatedResolvConf, modified := resolvconf.FilterResolvDns(latestResolvConf, container.daemon.config.EnableIPv6)
+			if modified {
+				// changes have occurred during resolv.conf localhost cleanup: generate an updated hash
+				newHash, err := utils.HashData(bytes.NewReader(updatedResolvConf))
+				if err != nil {
+					return err
+				}
+				latestHash = newHash
+			}
+
+			if err := container.updateResolvConf(updatedResolvConf, latestHash); err != nil {
+				return err
+			}
+			// successful update of the restarting container; set the flag off
+			container.UpdateDns = false
+		}
 		return nil
 	}
 
@@ -982,32 +1073,111 @@ func (container *Container) setupContainerDns() error {
 			return resolvconf.Build(container.ResolvConfPath, dns, dnsSearch)
 		}
 
-		// replace any localhost/127.* nameservers
-		resolvConf = utils.RemoveLocalDns(resolvConf)
-		// if the resulting resolvConf is empty, use DefaultDns
-		if !bytes.Contains(resolvConf, []byte("nameserver")) {
-			log.Infof("No non localhost DNS resolver found in resolv.conf and containers can't use it. Using default external servers : %v", DefaultDns)
-			// prefix the default dns options with nameserver
-			resolvConf = append(resolvConf, []byte("\nnameserver "+strings.Join(DefaultDns, "\nnameserver "))...)
-		}
+		// replace any localhost/127.*, and remove IPv6 nameservers if IPv6 disabled in daemon
+		resolvConf, _ = resolvconf.FilterResolvDns(resolvConf, daemon.config.EnableIPv6)
+	}
+	//get a sha256 hash of the resolv conf at this point so we can check
+	//for changes when the host resolv.conf changes (e.g. network update)
+	resolvHash, err := utils.HashData(bytes.NewReader(resolvConf))
+	if err != nil {
+		return err
+	}
+	resolvHashFile := container.ResolvConfPath + ".hash"
+	if err = ioutil.WriteFile(resolvHashFile, []byte(resolvHash), 0644); err != nil {
+		return err
 	}
 	return ioutil.WriteFile(container.ResolvConfPath, resolvConf, 0644)
 }
 
-func (container *Container) updateParentsHosts() error {
-	parents, err := container.daemon.Parents(container.Name)
+// called when the host's resolv.conf changes to check whether container's resolv.conf
+// is unchanged by the container "user" since container start: if unchanged, the
+// container's resolv.conf will be updated to match the host's new resolv.conf
+func (container *Container) updateResolvConf(updatedResolvConf []byte, newResolvHash string) error {
+
+	if container.ResolvConfPath == "" {
+		return nil
+	}
+	if container.Running {
+		//set a marker in the hostConfig to update on next start/restart
+		container.UpdateDns = true
+		return nil
+	}
+
+	resolvHashFile := container.ResolvConfPath + ".hash"
+
+	//read the container's current resolv.conf and compute the hash
+	resolvBytes, err := ioutil.ReadFile(container.ResolvConfPath)
 	if err != nil {
 		return err
 	}
-	for _, cid := range parents {
-		if cid == "0" {
+	curHash, err := utils.HashData(bytes.NewReader(resolvBytes))
+	if err != nil {
+		return err
+	}
+
+	//read the hash from the last time we wrote resolv.conf in the container
+	hashBytes, err := ioutil.ReadFile(resolvHashFile)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		// backwards compat: if no hash file exists, this container pre-existed from
+		// a Docker daemon that didn't contain this update feature. Given we can't know
+		// if the user has modified the resolv.conf since container start time, safer
+		// to just never update the container's resolv.conf during it's lifetime which
+		// we can control by setting hashBytes to an empty string
+		hashBytes = []byte("")
+	}
+
+	//if the user has not modified the resolv.conf of the container since we wrote it last
+	//we will replace it with the updated resolv.conf from the host
+	if string(hashBytes) == curHash {
+		log.Debugf("replacing %q with updated host resolv.conf", container.ResolvConfPath)
+
+		// for atomic updates to these files, use temporary files with os.Rename:
+		dir := path.Dir(container.ResolvConfPath)
+		tmpHashFile, err := ioutil.TempFile(dir, "hash")
+		if err != nil {
+			return err
+		}
+		tmpResolvFile, err := ioutil.TempFile(dir, "resolv")
+		if err != nil {
+			return err
+		}
+
+		// write the updates to the temp files
+		if err = ioutil.WriteFile(tmpHashFile.Name(), []byte(newResolvHash), 0644); err != nil {
+			return err
+		}
+		if err = ioutil.WriteFile(tmpResolvFile.Name(), updatedResolvConf, 0644); err != nil {
+			return err
+		}
+
+		// rename the temp files for atomic replace
+		if err = os.Rename(tmpHashFile.Name(), resolvHashFile); err != nil {
+			return err
+		}
+		return os.Rename(tmpResolvFile.Name(), container.ResolvConfPath)
+	}
+	return nil
+}
+
+func (container *Container) updateParentsHosts() error {
+	refs := container.daemon.ContainerGraph().RefPaths(container.ID)
+	for _, ref := range refs {
+		if ref.ParentID == "0" {
 			continue
 		}
 
-		c := container.daemon.Get(cid)
+		c, err := container.daemon.Get(ref.ParentID)
+		if err != nil {
+			log.Error(err)
+		}
+
 		if c != nil && !container.daemon.config.DisableNetwork && container.hostConfig.NetworkMode.IsPrivate() {
-			if err := etchosts.Update(c.HostsPath, container.NetworkSettings.IPAddress, container.Name[1:]); err != nil {
-				log.Errorf("Failed to update /etc/hosts in parent container: %v", err)
+			log.Debugf("Update /etc/hosts of %s for alias %s with ip %s", c.ID, ref.Name, container.NetworkSettings.IPAddress)
+			if err := etchosts.Update(c.HostsPath, container.NetworkSettings.IPAddress, ref.Name); err != nil {
+				log.Errorf("Failed to update /etc/hosts in parent container %s for alias %s: %v", c.ID, ref.Name, err)
 			}
 		}
 	}
@@ -1053,6 +1223,7 @@ func (container *Container) initializeNetworking() error {
 		if err != nil {
 			return err
 		}
+		container.HostnamePath = nc.HostnamePath
 		container.HostsPath = nc.HostsPath
 		container.ResolvConfPath = nc.ResolvConfPath
 		container.Config.Hostname = nc.Config.Hostname
@@ -1072,15 +1243,15 @@ func (container *Container) initializeNetworking() error {
 // Make sure the config is compatible with the current kernel
 func (container *Container) verifyDaemonSettings() {
 	if container.Config.Memory > 0 && !container.daemon.sysInfo.MemoryLimit {
-		log.Infof("WARNING: Your kernel does not support memory limit capabilities. Limitation discarded.")
+		log.Warnf("Your kernel does not support memory limit capabilities. Limitation discarded.")
 		container.Config.Memory = 0
 	}
 	if container.Config.Memory > 0 && !container.daemon.sysInfo.SwapLimit {
-		log.Infof("WARNING: Your kernel does not support swap limit capabilities. Limitation discarded.")
+		log.Warnf("Your kernel does not support swap limit capabilities. Limitation discarded.")
 		container.Config.MemorySwap = -1
 	}
 	if container.daemon.sysInfo.IPv4ForwardingDisabled {
-		log.Infof("WARNING: IPv4 forwarding is disabled. Networking will not work")
+		log.Warnf("IPv4 forwarding is disabled. Networking will not work")
 	}
 }
 
@@ -1098,7 +1269,7 @@ func (container *Container) setupLinkedContainers() ([]string, error) {
 		container.activeLinks = make(map[string]*links.Link, len(children))
 
 		// If we encounter an error make sure that we rollback any network
-		// config and ip table changes
+		// config and iptables changes
 		rollback := func() {
 			for _, link := range container.activeLinks {
 				link.Disable()
@@ -1191,20 +1362,37 @@ func (container *Container) setupWorkingDirectory() error {
 	return nil
 }
 
-func (container *Container) startLoggingToDisk() error {
-	// Setup logging of stdout and stderr to disk
-	pth, err := container.logPath("json")
+func (container *Container) startLogging() error {
+	cfg := container.hostConfig.LogConfig
+	if cfg.Type == "" {
+		cfg = container.daemon.defaultLogConfig
+	}
+	var l logger.Logger
+	switch cfg.Type {
+	case "json-file":
+		pth, err := container.logPath("json")
+		if err != nil {
+			return err
+		}
+
+		dl, err := jsonfilelog.New(pth)
+		if err != nil {
+			return err
+		}
+		l = dl
+	case "none":
+		return nil
+	default:
+		return fmt.Errorf("Unknown logging driver: %s", cfg.Type)
+	}
+
+	copier, err := logger.NewCopier(container.ID, map[string]io.Reader{"stdout": container.StdoutPipe(), "stderr": container.StderrPipe()}, l)
 	if err != nil {
 		return err
 	}
-
-	if err := container.daemon.LogToDisk(container.stdout, pth, "stdout"); err != nil {
-		return err
-	}
-
-	if err := container.daemon.LogToDisk(container.stderr, pth, "stderr"); err != nil {
-		return err
-	}
+	container.logCopier = copier
+	copier.Run()
+	container.logDriver = l
 
 	return nil
 }
@@ -1272,9 +1460,9 @@ func (container *Container) GetMountLabel() string {
 
 func (container *Container) getIpcContainer() (*Container, error) {
 	containerID := container.hostConfig.IpcMode.Container()
-	c := container.daemon.Get(containerID)
-	if c == nil {
-		return nil, fmt.Errorf("no such container to join IPC: %s", containerID)
+	c, err := container.daemon.Get(containerID)
+	if err != nil {
+		return nil, err
 	}
 	if !c.IsRunning() {
 		return nil, fmt.Errorf("cannot join IPC of a non running container: %s", containerID)
@@ -1289,9 +1477,9 @@ func (container *Container) getNetworkedContainer() (*Container, error) {
 		if len(parts) != 2 {
 			return nil, fmt.Errorf("no container specified to join network")
 		}
-		nc := container.daemon.Get(parts[1])
-		if nc == nil {
-			return nil, fmt.Errorf("no such container to join network: %s", parts[1])
+		nc, err := container.daemon.Get(parts[1])
+		if err != nil {
+			return nil, err
 		}
 		if !nc.IsRunning() {
 			return nil, fmt.Errorf("cannot join network of a non running container: %s", parts[1])
@@ -1300,4 +1488,17 @@ func (container *Container) getNetworkedContainer() (*Container, error) {
 	default:
 		return nil, fmt.Errorf("network mode not set to container")
 	}
+}
+
+func (container *Container) Stats() (*execdriver.ResourceStats, error) {
+	return container.daemon.Stats(container)
+}
+
+func (c *Container) LogDriverType() string {
+	c.Lock()
+	defer c.Unlock()
+	if c.hostConfig.LogConfig.Type == "" {
+		return c.daemon.defaultLogConfig.Type
+	}
+	return c.hostConfig.LogConfig.Type
 }

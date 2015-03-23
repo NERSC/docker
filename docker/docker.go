@@ -11,7 +11,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/docker/docker/api"
 	"github.com/docker/docker/api/client"
-	"github.com/docker/docker/dockerversion"
+	"github.com/docker/docker/autogen/dockerversion"
 	flag "github.com/docker/docker/pkg/mflag"
 	"github.com/docker/docker/pkg/reexec"
 	"github.com/docker/docker/utils"
@@ -67,7 +67,13 @@ func main() {
 		flHosts = append(flHosts, defaultHost)
 	}
 
+	setDefaultConfFlag(flTrustKey, defaultTrustKeyFile)
+
 	if *flDaemon {
+		if *flHelp {
+			flag.Usage()
+			return
+		}
 		mainDaemon()
 		return
 	}
@@ -109,7 +115,7 @@ func main() {
 			*flTls = true
 			cert, err := tls.LoadX509KeyPair(*flCert, *flKey)
 			if err != nil {
-				log.Fatalf("Couldn't load X509 key pair: %s. Key encrypted?", err)
+				log.Fatalf("Couldn't load X509 key pair: %q. Make sure the key is encrypted", err)
 			}
 			tlsConfig.Certificates = []tls.Certificate{cert}
 		}
@@ -118,9 +124,9 @@ func main() {
 	}
 
 	if *flTls || *flTlsVerify {
-		cli = client.NewDockerCli(os.Stdin, os.Stdout, os.Stderr, nil, protoAddrParts[0], protoAddrParts[1], &tlsConfig)
+		cli = client.NewDockerCli(os.Stdin, os.Stdout, os.Stderr, *flTrustKey, protoAddrParts[0], protoAddrParts[1], &tlsConfig)
 	} else {
-		cli = client.NewDockerCli(os.Stdin, os.Stdout, os.Stderr, nil, protoAddrParts[0], protoAddrParts[1], nil)
+		cli = client.NewDockerCli(os.Stdin, os.Stdout, os.Stderr, *flTrustKey, protoAddrParts[0], protoAddrParts[1], nil)
 	}
 
 	if err := cli.Cmd(flag.Args()...); err != nil {

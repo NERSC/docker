@@ -6,6 +6,7 @@ docker-load - Load an image from a tar archive on STDIN
 
 # SYNOPSIS
 **docker load**
+[**--help**]
 [**-i**|**--input**[=*INPUT*]]
 
 
@@ -15,6 +16,9 @@ Loads a tarred repository from a file or the standard input stream.
 Restores both images and tags.
 
 # OPTIONS
+**--help**
+  Print usage statement
+
 **-i**, **--input**=""
    Read from a tar archive file, instead of STDIN
 
@@ -31,6 +35,9 @@ Restores both images and tags.
     fedora              20                  58394af37342        7 weeks ago         385.5 MB
     fedora              heisenbug           58394af37342        7 weeks ago         385.5 MB
     fedora              latest              58394af37342        7 weeks ago         385.5 MB
+
+# See also
+**docker-save(1)** to save an image(s) to a tar archive (streamed to STDOUT by default).
 
 # HISTORY
 April 2014, Originally compiled by William Henry (whenry at redhat dot com)

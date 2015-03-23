@@ -12,12 +12,19 @@ import (
 	"io/ioutil"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/docker/docker/nat"
 	flag "github.com/docker/docker/pkg/mflag"
 	"github.com/docker/docker/runconfig"
+)
+
+const (
+	// NoBaseImageSpecifier is the symbol used by the FROM
+	// command to specify that no base image is to be used.
+	NoBaseImageSpecifier string = "scratch"
 )
 
 // dispatch with no layer / parsing. This is effectively not a command.
@@ -32,7 +39,7 @@ func nullDispatch(b *Builder, args []string, attributes map[string]bool, origina
 //
 func env(b *Builder, args []string, attributes map[string]bool, original string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("ENV is missing arguments")
+		return fmt.Errorf("ENV requires at least one argument")
 	}
 
 	if len(args)%2 != 0 {
@@ -71,11 +78,42 @@ func env(b *Builder, args []string, attributes map[string]bool, original string)
 // Sets the maintainer metadata.
 func maintainer(b *Builder, args []string, attributes map[string]bool, original string) error {
 	if len(args) != 1 {
-		return fmt.Errorf("MAINTAINER requires only one argument")
+		return fmt.Errorf("MAINTAINER requires exactly one argument")
 	}
 
 	b.maintainer = args[0]
 	return b.commit("", b.Config.Cmd, fmt.Sprintf("MAINTAINER %s", b.maintainer))
+}
+
+// LABEL some json data describing the image
+//
+// Sets the Label variable foo to bar,
+//
+func label(b *Builder, args []string, attributes map[string]bool, original string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("LABEL requires at least one argument")
+	}
+	if len(args)%2 != 0 {
+		// should never get here, but just in case
+		return fmt.Errorf("Bad input to LABEL, too many args")
+	}
+
+	commitStr := "LABEL"
+
+	if b.Config.Labels == nil {
+		b.Config.Labels = map[string]string{}
+	}
+
+	for j := 0; j < len(args); j++ {
+		// name  ==> args[j]
+		// value ==> args[j+1]
+		newVar := args[j] + "=" + args[j+1] + ""
+		commitStr += " " + newVar
+
+		b.Config.Labels[args[j]] = args[j+1]
+		j++
+	}
+	return b.commit("", b.Config.Cmd, commitStr)
 }
 
 // ADD foo /path
@@ -114,6 +152,12 @@ func from(b *Builder, args []string, attributes map[string]bool, original string
 
 	name := args[0]
 
+	if name == NoBaseImageSpecifier {
+		b.image = ""
+		b.noBaseImage = true
+		return nil
+	}
+
 	image, err := b.Daemon.Repositories().LookupImage(name)
 	if b.Pull {
 		image, err = b.pullImage(name)
@@ -146,6 +190,10 @@ func from(b *Builder, args []string, attributes map[string]bool, original string
 // cases.
 //
 func onbuild(b *Builder, args []string, attributes map[string]bool, original string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("ONBUILD requires at least one argument")
+	}
+
 	triggerInstruction := strings.ToUpper(strings.TrimSpace(args[0]))
 	switch triggerInstruction {
 	case "ONBUILD":
@@ -171,14 +219,11 @@ func workdir(b *Builder, args []string, attributes map[string]bool, original str
 
 	workdir := args[0]
 
-	if workdir[0] == '/' {
-		b.Config.WorkingDir = workdir
-	} else {
-		if b.Config.WorkingDir == "" {
-			b.Config.WorkingDir = "/"
-		}
-		b.Config.WorkingDir = filepath.Join(b.Config.WorkingDir, workdir)
+	if !filepath.IsAbs(workdir) {
+		workdir = filepath.Join("/", b.Config.WorkingDir, workdir)
 	}
+
+	b.Config.WorkingDir = workdir
 
 	return b.commit("", b.Config.Cmd, fmt.Sprintf("WORKDIR %v", workdir))
 }
@@ -193,14 +238,14 @@ func workdir(b *Builder, args []string, attributes map[string]bool, original str
 // RUN [ "echo", "hi" ] # echo hi
 //
 func run(b *Builder, args []string, attributes map[string]bool, original string) error {
-	if b.image == "" {
+	if b.image == "" && !b.noBaseImage {
 		return fmt.Errorf("Please provide a source image with `from` prior to run")
 	}
 
 	args = handleJsonArgs(args, attributes)
 
-	if len(args) == 1 {
-		args = append([]string{"/bin/sh", "-c"}, args[0])
+	if !attributes["json"] {
+		args = append([]string{"/bin/sh", "-c"}, args...)
 	}
 
 	runCmd := flag.NewFlagSet("run", flag.ContinueOnError)
@@ -262,7 +307,7 @@ func cmd(b *Builder, args []string, attributes map[string]bool, original string)
 		b.Config.Cmd = append([]string{"/bin/sh", "-c"}, b.Config.Cmd...)
 	}
 
-	if err := b.commit("", b.Config.Cmd, fmt.Sprintf("CMD %v", b.Config.Cmd)); err != nil {
+	if err := b.commit("", b.Config.Cmd, fmt.Sprintf("CMD %q", b.Config.Cmd)); err != nil {
 		return err
 	}
 
@@ -302,7 +347,7 @@ func entrypoint(b *Builder, args []string, attributes map[string]bool, original 
 		b.Config.Cmd = nil
 	}
 
-	if err := b.commit("", b.Config.Cmd, fmt.Sprintf("ENTRYPOINT %v", b.Config.Entrypoint)); err != nil {
+	if err := b.commit("", b.Config.Cmd, fmt.Sprintf("ENTRYPOINT %q", b.Config.Entrypoint)); err != nil {
 		return err
 	}
 
@@ -317,23 +362,42 @@ func entrypoint(b *Builder, args []string, attributes map[string]bool, original 
 func expose(b *Builder, args []string, attributes map[string]bool, original string) error {
 	portsTab := args
 
+	if len(args) == 0 {
+		return fmt.Errorf("EXPOSE requires at least one argument")
+	}
+
 	if b.Config.ExposedPorts == nil {
 		b.Config.ExposedPorts = make(nat.PortSet)
 	}
 
-	ports, _, err := nat.ParsePortSpecs(append(portsTab, b.Config.PortSpecs...))
+	ports, bindingMap, err := nat.ParsePortSpecs(append(portsTab, b.Config.PortSpecs...))
 	if err != nil {
 		return err
 	}
 
+	for _, bindings := range bindingMap {
+		if bindings[0].HostIp != "" || bindings[0].HostPort != "" {
+			fmt.Fprintf(b.ErrStream, " ---> Using Dockerfile's EXPOSE instruction"+
+				"      to map host ports to container ports (ip:hostPort:containerPort) is deprecated.\n"+
+				"      Please use -p to publish the ports.\n")
+		}
+	}
+
+	// instead of using ports directly, we build a list of ports and sort it so
+	// the order is consistent. This prevents cache burst where map ordering
+	// changes between builds
+	portList := make([]string, len(ports))
+	var i int
 	for port := range ports {
 		if _, exists := b.Config.ExposedPorts[port]; !exists {
 			b.Config.ExposedPorts[port] = struct{}{}
 		}
+		portList[i] = string(port)
+		i++
 	}
+	sort.Strings(portList)
 	b.Config.PortSpecs = nil
-
-	return b.commit("", b.Config.Cmd, fmt.Sprintf("EXPOSE %v", ports))
+	return b.commit("", b.Config.Cmd, fmt.Sprintf("EXPOSE %s", strings.Join(portList, " ")))
 }
 
 // USER foo
@@ -356,7 +420,7 @@ func user(b *Builder, args []string, attributes map[string]bool, original string
 //
 func volume(b *Builder, args []string, attributes map[string]bool, original string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("Volume cannot be empty")
+		return fmt.Errorf("VOLUME requires at least one argument")
 	}
 
 	if b.Config.Volumes == nil {

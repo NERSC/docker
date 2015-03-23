@@ -21,20 +21,28 @@ Docker.
 
 A *data volume* is a specially-designated directory within one or more
 containers that bypasses the [*Union File
-System*](/terms/layer/#ufs-def) to provide several useful features for
-persistent or shared data:
+System*](/terms/layer/#union-file-system). Data volumes provide several 
+useful features for persistent or shared data:
 
-- Data volumes can be shared and reused between containers
-- Changes to a data volume are made directly
-- Changes to a data volume will not be included when you update an image
-- Volumes persist until no containers use them
+- Volumes are initialized when a container is created. If the container's
+  base image contains data at the specified mount point, that data is 
+  copied into the new volume.
+- Data volumes can be shared and reused among containers.
+- Changes to a data volume are made directly.
+- Changes to a data volume will not be included when you update an image.
+- Data volumes persist even if the container itself is deleted.
+
+Data volumes are designed to persist data, independent of the container's life 
+cycle. Docker therefore *never* automatically delete volumes when you remove 
+a container, nor will it "garbage collect" volumes that are no longer 
+referenced by a container.
 
 ### Adding a data volume
 
 You can add a data volume to a container using the `-v` flag with the
-`docker run` command. You can use the `-v` multiple times in a single
-`docker run` to mount multiple data volumes. Let's mount a single volume
-now in our web application container.
+`docker create` and `docker run` command. You can use the `-v` multiple times
+to mount multiple data volumes. Let's mount a single volume now in our web
+application container.
 
     $ sudo docker run -d -P --name web -v /webapp training/webapp python app.py
 
@@ -47,7 +55,15 @@ This will create a new volume inside a container at `/webapp`.
 ### Mount a Host Directory as a Data Volume
 
 In addition to creating a volume using the `-v` flag you can also mount a
-directory from your own host into a container.
+directory from your Docker daemon's host into a container.
+
+> **Note:**
+> If you are using Boot2Docker, your Docker daemon only has limited access to
+> your OSX/Windows filesystem. Boot2Docker tries to auto-share your `/Users`
+> (OSX) or `C:\Users` (Windows) directory - and so you can mount files or directories
+> using `docker run -v /Users/<path>:/<container path> ...` (OSX) or
+> `docker run -v /c/Users/<path>:/<container path ...` (Windows). All other paths
+> come from the Boot2Docker virtual machine's filesystem.
 
     $ sudo docker run -d -P --name web -v /src/webapp:/opt/webapp training/webapp python app.py
 
@@ -55,7 +71,7 @@ This will mount the host directory, `/src/webapp`, into the container at
 `/opt/webapp`.
 
 > **Note:**
-> If the path `/opt/webapp` already exists inside the container's image, it's
+> If the path `/opt/webapp` already exists inside the container's image, its
 > contents will be replaced by the contents of `/src/webapp` on the host to stay
 > consistent with the expected behavior of `mount`
 
@@ -67,8 +83,8 @@ create it for you.
 
 > **Note:** 
 > This is not available from a `Dockerfile` due to the portability
-> and sharing purpose of it. As the host directory is, by its nature,
-> host-dependent, a host directory specified in a `Dockerfile` probably
+> and sharing purpose of built images. The host directory is, by its nature,
+> host-dependent, so a host directory specified in a `Dockerfile` probably
 > wouldn't work on all hosts.
 
 Docker defaults to a read-write volume but we can also mount a directory
@@ -105,8 +121,10 @@ create a named Data Volume Container, and then to mount the data from
 it.
 
 Let's create a new named container with a volume to share.
+While this container doesn't run an application, it reuses the `training/postgres`
+image so that all containers are using layers in common, saving disk space.
 
-    $ sudo docker run -d -v /dbdata --name dbdata training/postgres echo Data-only container for postgres
+    $ sudo docker create -v /dbdata --name dbdata training/postgres /bin/true
 
 You can then use the `--volumes-from` flag to mount the `/dbdata` volume in another container.
 
@@ -115,6 +133,11 @@ You can then use the `--volumes-from` flag to mount the `/dbdata` volume in anot
 And another:
 
     $ sudo docker run -d --volumes-from dbdata --name db2 training/postgres
+
+In this case, if the `postgres` image contained a directory called `/dbdata`
+then mounting the volumes from the `dbdata` container hides the
+`/dbdata` files from the `postgres` image. The result is only the files
+from the `dbdata` container are visible.
 
 You can use multiple `--volumes-from` parameters to bring together multiple data
 volumes from multiple containers.
@@ -129,6 +152,14 @@ container, or the subsequent containers `db1` and `db2`, the volumes will not
 be deleted.  To delete the volume from disk, you must explicitly call
 `docker rm -v` against the last container with a reference to the volume. This
 allows you to upgrade, or effectively migrate data volumes between containers.
+
+> **Note:** Docker will not warn you when removing a container *without* 
+> providing the `-v` option to delete its volumes. If you remove containers
+> without using the `-v` option, you may end up with "dangling" volumes; 
+> volumes that are no longer referenced by a container.
+> Dangling volumes are difficult to get rid of and can take up a large amount
+> of disk space. We're working on improving volume management and you can check
+> progress on this in [pull request #8484](https://github.com/docker/docker/pull/8484)
 
 ## Backup, restore, or migrate data volumes
 
